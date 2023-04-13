@@ -493,10 +493,20 @@ std::vector<bool> SliceDataStorage::getExtrudersUsed(const LayerIndex layer_nr) 
         // support
         if (layer_nr < int(support.supportLayers.size()))
         {
-            const SupportLayer& support_layer = support.supportLayers[layer_nr];
+            const SupportLayer& support_layer = support.supportLayers[std::max(LayerIndex(0), layer_nr)];
+            if (layer_nr == 0)
+            {
+                if (! support_layer.support_infill_parts.empty())
+                {
+                    ret[mesh_group_settings.get<ExtruderTrain&>("support_extruder_nr_layer_0").extruder_nr] = true;
+                }
+            }
+            else
+            {
             for (const SupportInfillPart& part : support_layer.support_infill_parts)
             {
                 ret[part.extruder_nr] = true;
+            }
             }
             if (! support_layer.support_bottom.empty())
             {
