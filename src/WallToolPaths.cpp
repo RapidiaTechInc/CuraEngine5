@@ -53,9 +53,10 @@ const std::vector<VariableWidthLines>& WallToolPaths::generate()
     const coord_t allowed_distance = settings.get<coord_t>("meshfix_maximum_deviation");
 
     // Sometimes small slivers of polygons mess up the prepared_outline. By performing an open-close operation
-    // 1/4 of the min_wall_line_width these slivers are removed, while still keeping enough information to not
-    // degrade the print quality; These features can't be printed anyhow. See PR CuraEngine#1811 for some screenshots
-    const coord_t open_close_distance = settings.get<coord_t>("min_wall_line_width") / 4;
+    // with half the minimum printable feature size or minimum line width, these slivers are removed, while still
+    // keeping enough information to not degrade the print quality;
+    // These features can't be printed anyhow. See PR CuraEngine#1811 for some screenshots
+    const coord_t open_close_distance = settings.get<bool>("fill_outline_gaps") ? settings.get<coord_t>("min_feature_size") / 2 - 5 : settings.get<coord_t>("min_wall_line_width") / 2 - 5;
     const coord_t epsilon_offset = (allowed_distance / 2) - 1;
     const AngleRadians transitioning_angle = settings.get<AngleRadians>("wall_transition_angle");
     constexpr coord_t discretization_step_size = MM2INT(0.8);
@@ -63,6 +64,7 @@ const std::vector<VariableWidthLines>& WallToolPaths::generate()
     // Simplify outline for boost::voronoi consumption. Absolutely no self intersections or near-self intersections allowed:
     // TODO: Open question: Does this indeed fix all (or all-but-one-in-a-million) cases for manifold but otherwise possibly complex polygons?
     Polygons prepared_outline = outline.offset(-open_close_distance).offset(open_close_distance * 2).offset(-open_close_distance);
+    prepared_outline.removeSmallAreas(small_area_length * small_area_length, false);
     prepared_outline = Simplify(settings).polygon(prepared_outline);
     PolygonUtils::fixSelfIntersections(epsilon_offset, prepared_outline);
     prepared_outline.removeDegenerateVerts();
@@ -70,8 +72,8 @@ const std::vector<VariableWidthLines>& WallToolPaths::generate()
     // Removing collinear edges may introduce self intersections, so we need to fix them again
     PolygonUtils::fixSelfIntersections(epsilon_offset, prepared_outline);
     prepared_outline.removeDegenerateVerts();
-    prepared_outline.removeSmallAreas(small_area_length * small_area_length, false);
     prepared_outline = prepared_outline.unionPolygons();
+    prepared_outline = Simplify(settings).polygon(prepared_outline);
 
     if (prepared_outline.area() <= 0)
     {
@@ -197,11 +199,16 @@ void WallToolPaths::removeSmallLines(std::vector<VariableWidthLines>& toolpaths)
 void WallToolPaths::simplifyToolPaths(std::vector<VariableWidthLines>& toolpaths, const Settings& settings)
 {
     const Simplify simplifier(settings);
-    for(size_t toolpaths_idx = 0; toolpaths_idx < toolpaths.size(); ++toolpaths_idx)
+    for (auto& toolpath : toolpaths)
     {
-        for(ExtrusionLine& line : toolpaths[toolpaths_idx])
+        for (auto& line : toolpath)
         {
             line = line.is_closed ? simplifier.polygon(line) : simplifier.polyline(line);
+
+            if (line.is_closed && line.size() >= 2 && line.front() != line.back())
+            {
+                line.emplace_back(line.front());
+            }
         }
     }
 }

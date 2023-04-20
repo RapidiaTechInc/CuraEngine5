@@ -1,4 +1,4 @@
-// Copyright (c) 2022 Ultimaker B.V.
+// Copyright (c) 2023 UltiMaker
 // CuraEngine is released under the terms of the AGPLv3 or higher
 
 #include "ExtruderTrain.h"
@@ -110,7 +110,6 @@ bool InsetOrderOptimizer::addToLayer()
 
     order_optimizer.optimize();
 
-    cura::Point p_end{ 0, 0 };
     for (const PathOrdering<const ExtrusionLine*>& path : order_optimizer.paths)
     {
         if (path.vertices->empty())
@@ -127,10 +126,7 @@ bool InsetOrderOptimizer::addToLayer()
         const bool revert_layer = alternate_walls && (layer_nr % 2);
         const bool backwards = path.backwards != (revert_inset != revert_layer);
         const size_t start_index = (backwards != path.backwards) ? path.vertices->size() - (path.start_vertex + 1) : path.start_vertex;
-
-        p_end = path.backwards ? path.vertices->back().p : path.vertices->front().p;
-        const cura::Point p_start = path.backwards ? path.vertices->front().p : path.vertices->back().p;
-        const bool linked_path = p_start != p_end;
+        const bool linked_path = ! path.is_closed;
 
         gcode_writer.setExtruder_addPrime(storage, gcode_layer, extruder_nr);
         gcode_layer.setIsInside(true); // Going to print walls, which are always inside.
@@ -357,6 +353,10 @@ constexpr bool InsetOrderOptimizer::shouldReversePath(const bool use_one_extrude
 
 std::vector<ExtrusionLine> InsetOrderOptimizer::getWallsToBeAdded(const bool reverse, const bool use_one_extruder)
 {
+    if (paths.empty())
+    {
+        return { };
+    }
     rg::any_view<VariableWidthLines> view;
     if (reverse)
     {
