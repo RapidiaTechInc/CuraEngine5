@@ -44,7 +44,7 @@ class CuraEngineConan(ConanFile):
     scm = {
         "type": "git",
         "subfolder": ".",
-        "url": "auto",
+        "url": "https://github.com/RapidiaTechInc/CuraEngine5.git",
         "revision": "auto"
     }
 
