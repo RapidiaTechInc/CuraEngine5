@@ -94,7 +94,10 @@ bool AreaSupport::handleSupportModifierMesh(SliceDataStorage& storage, const Set
         switch (modifier_type)
         {
         case ANTI_OVERHANG:
-            support_layer.anti_overhang.add(slicer_layer.polygons);
+            if (!mesh_settings.get<bool>("support_enable"))
+            {
+                support_layer.anti_overhang.add(slicer_layer.polygons);
+            }
             break;
         case SUPPORT_DROP_DOWN:
             support_layer.support_mesh_drop_down.add(slicer_layer.polygons);
