@@ -188,7 +188,7 @@ void AdaptiveLayerHeights::calculateMeshTriangleSlopes()
     for (const Mesh& mesh : Application::getInstance().current_slice->scene.current_mesh_group->meshes)
     {
         // Skip meshes that are not printable
-        if (mesh.settings.get<bool>("infill_mesh") || mesh.settings.get<bool>("cutting_mesh") || mesh.settings.get<bool>("anti_overhang_mesh"))
+        if (mesh.settings.get<bool>("infill_mesh") || mesh.settings.get<bool>("cutting_mesh") || mesh.settings.get<bool>("anti_overhang_mesh") || mesh.settings.get<bool>("support_modifier_mesh"))
         {
             continue;
         }

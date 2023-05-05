@@ -120,7 +120,7 @@ SliceMeshStorage::~SliceMeshStorage()
 
 bool SliceMeshStorage::getExtruderIsUsed(const size_t extruder_nr) const
 {
-    if (settings.get<bool>("anti_overhang_mesh") || settings.get<bool>("support_mesh"))
+    if (settings.get<bool>("anti_overhang_mesh") || settings.get<bool>("support_mesh") || settings.get<bool>("support_modifier_mesh"))
     { // object is not printed as object, but as support.
         return false;
     }
@@ -169,7 +169,7 @@ bool SliceMeshStorage::getExtruderIsUsed(const size_t extruder_nr, const LayerIn
     {
         return false;
     }
-    if (settings.get<bool>("anti_overhang_mesh") || settings.get<bool>("support_mesh"))
+    if (settings.get<bool>("anti_overhang_mesh") || settings.get<bool>("support_mesh") || settings.get<bool>("support_modifier_mesh"))
     { // object is not printed as object, but as support.
         return false;
     }
@@ -239,7 +239,7 @@ bool SliceMeshStorage::getExtruderIsUsed(const size_t extruder_nr, const LayerIn
 
 bool SliceMeshStorage::isPrinted() const
 {
-    return ! settings.get<bool>("infill_mesh") && ! settings.get<bool>("cutting_mesh") && ! settings.get<bool>("anti_overhang_mesh");
+    return ! settings.get<bool>("infill_mesh") && ! settings.get<bool>("cutting_mesh") && ! settings.get<bool>("anti_overhang_mesh") && ! settings.get<bool>("support_modifier_mesh");
 }
 
 Point SliceMeshStorage::getZSeamHint() const
@@ -308,7 +308,8 @@ Polygons SliceDataStorage::getLayerOutlines(const LayerIndex layer_nr, const boo
         {
             for (const SliceMeshStorage& mesh : meshes)
             {
-                if (mesh.settings.get<bool>("infill_mesh") || mesh.settings.get<bool>("anti_overhang_mesh") || (extruder_nr != -1 && extruder_nr != int(mesh.settings.get<ExtruderTrain&>("wall_0_extruder_nr").extruder_nr)))
+                if (mesh.settings.get<bool>("infill_mesh") || mesh.settings.get<bool>("anti_overhang_mesh") || mesh.settings.get<bool>("support_modifier_mesh")
+                    || (extruder_nr != -1 && extruder_nr != int(mesh.settings.get<ExtruderTrain&>("wall_0_extruder_nr").extruder_nr)))
                 {
                     continue;
                 }
@@ -503,10 +504,10 @@ std::vector<bool> SliceDataStorage::getExtrudersUsed(const LayerIndex layer_nr) 
             }
             else
             {
-            for (const SupportInfillPart& part : support_layer.support_infill_parts)
-            {
-                ret[part.extruder_nr] = true;
-            }
+                for (const SupportInfillPart& part : support_layer.support_infill_parts)
+                {
+                    ret[part.extruder_nr] = true;
+                }
             }
             if (! support_layer.support_bottom.empty())
             {

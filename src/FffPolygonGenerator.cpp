@@ -128,9 +128,7 @@ bool FffPolygonGenerator::sliceModel(MeshGroup* meshgroup, TimeKeeper& timeKeepe
         const auto variable_layer_height_max_variation = mesh_group_settings.get<coord_t>("adaptive_layer_height_variation");
         const auto variable_layer_height_variation_step = mesh_group_settings.get<coord_t>("adaptive_layer_height_variation_step");
         const auto adaptive_threshold = mesh_group_settings.get<coord_t>("adaptive_layer_height_threshold");
-        adaptive_layer_heights = new AdaptiveLayerHeights(layer_thickness, variable_layer_height_max_variation,
-                                                          variable_layer_height_variation_step, adaptive_threshold,
-                                                          meshgroup);
+        adaptive_layer_heights = new AdaptiveLayerHeights(layer_thickness, variable_layer_height_max_variation, variable_layer_height_variation_step, adaptive_threshold, meshgroup);
 
         // Get the amount of layers
         slice_layer_count = adaptive_layer_heights->getLayerCount();
@@ -230,7 +228,7 @@ bool FffPolygonGenerator::sliceModel(MeshGroup* meshgroup, TimeKeeper& timeKeepe
     for (unsigned int mesh_idx = 0; mesh_idx < slicerList.size(); mesh_idx++)
     {
         Mesh& mesh = scene.current_mesh_group->meshes[mesh_idx];
-        if (mesh.settings.get<bool>("conical_overhang_enabled") && ! mesh.settings.get<bool>("anti_overhang_mesh"))
+        if (mesh.settings.get<bool>("conical_overhang_enabled") && ! (mesh.settings.get<bool>("anti_overhang_mesh") || (mesh.settings.get<bool>("support_modifier_mesh") && ! mesh.settings.get<bool>("support_enable"))))
         {
             ConicalOverhang::apply(slicerList[mesh_idx], mesh);
         }
@@ -258,7 +256,7 @@ bool FffPolygonGenerator::sliceModel(MeshGroup* meshgroup, TimeKeeper& timeKeepe
     {
         Mesh& mesh = scene.current_mesh_group->meshes[meshIdx];
         Slicer* slicer = slicerList[meshIdx];
-        if (! mesh.settings.get<bool>("anti_overhang_mesh") && ! mesh.settings.get<bool>("infill_mesh") && ! mesh.settings.get<bool>("cutting_mesh"))
+        if (! mesh.settings.get<bool>("anti_overhang_mesh") && ! mesh.settings.get<bool>("support_modifier_mesh") && ! mesh.settings.get<bool>("infill_mesh") && ! mesh.settings.get<bool>("cutting_mesh"))
         {
             storage.print_layer_count = std::max(storage.print_layer_count, slicer->layers.size());
         }
@@ -345,7 +343,7 @@ void FffPolygonGenerator::slices2polygons(SliceDataStorage& storage, TimeKeeper&
     unsigned int slice_layer_count = 0;
     for (SliceMeshStorage& mesh : storage.meshes)
     {
-        if (! mesh.settings.get<bool>("infill_mesh") && ! mesh.settings.get<bool>("anti_overhang_mesh"))
+        if (! mesh.settings.get<bool>("infill_mesh") && ! mesh.settings.get<bool>("anti_overhang_mesh") && ! mesh.settings.get<bool>("support_modifier_mesh"))
         {
             slice_layer_count = std::max<unsigned int>(slice_layer_count, mesh.layers.size());
         }
@@ -694,7 +692,7 @@ void FffPolygonGenerator::processDerivedWallsSkinInfill(SliceMeshStorage& mesh)
     SkinInfillAreaComputation::combineInfillLayers(mesh);
 
     // Fuzzy skin. Disabled when using interlocking structures, the internal interlocking walls become fuzzy.
-    if (mesh.settings.get<bool>("magic_fuzzy_skin_enabled") && !mesh.settings.get<bool>("interlocking_enable"))
+    if (mesh.settings.get<bool>("magic_fuzzy_skin_enabled") && ! mesh.settings.get<bool>("interlocking_enable"))
     {
         processFuzzyWalls(mesh);
     }
@@ -825,7 +823,7 @@ void FffPolygonGenerator::computePrintHeightStatistics(SliceDataStorage& storage
         // Height of the meshes themselves.
         for (SliceMeshStorage& mesh : storage.meshes)
         {
-            if (mesh.settings.get<bool>("anti_overhang_mesh") || mesh.settings.get<bool>("support_mesh"))
+            if (mesh.settings.get<bool>("anti_overhang_mesh") || mesh.settings.get<bool>("support_modifier_mesh") || mesh.settings.get<bool>("support_mesh"))
             {
                 continue; // Special type of mesh that doesn't get printed.
             }
@@ -859,12 +857,12 @@ void FffPolygonGenerator::computePrintHeightStatistics(SliceDataStorage& storage
         case EPlatformAdhesion::SKIRT:
         case EPlatformAdhesion::BRIM:
         {
-                const std::vector<ExtruderTrain*> skirt_brim_extruder_trains = mesh_group_settings.get<std::vector<ExtruderTrain*>>("skirt_brim_extruder_nr");
-                for (ExtruderTrain* train : skirt_brim_extruder_trains)
-                {
-                    const size_t skirt_brim_extruder_nr = train->extruder_nr;
-                    max_print_height_per_extruder[skirt_brim_extruder_nr] = std::max(0, max_print_height_per_extruder[skirt_brim_extruder_nr]); // Includes layer 0.
-                }
+            const std::vector<ExtruderTrain*> skirt_brim_extruder_trains = mesh_group_settings.get<std::vector<ExtruderTrain*>>("skirt_brim_extruder_nr");
+            for (ExtruderTrain* train : skirt_brim_extruder_trains)
+            {
+                const size_t skirt_brim_extruder_nr = train->extruder_nr;
+                max_print_height_per_extruder[skirt_brim_extruder_nr] = std::max(0, max_print_height_per_extruder[skirt_brim_extruder_nr]); // Includes layer 0.
+            }
             break;
         }
         case EPlatformAdhesion::RAFT:
@@ -939,7 +937,8 @@ void FffPolygonGenerator::processOozeShield(SliceDataStorage& storage)
             const auto& extruders = Application::getInstance().current_slice->scene.extruders;
             for (int extruder_nr = 0; extruder_nr < int(extruders.size()); extruder_nr++)
             {
-                if ( ! extruder_is_used[extruder_nr]) continue;
+                if (! extruder_is_used[extruder_nr])
+                    continue;
                 max_line_width = std::max(max_line_width, extruders[extruder_nr].settings.get<coord_t>("skirt_brim_line_width"));
             }
         }
@@ -990,7 +989,8 @@ void FffPolygonGenerator::processDraftShield(SliceDataStorage& storage)
             const auto& extruders = Application::getInstance().current_slice->scene.extruders;
             for (int extruder_nr = 0; extruder_nr < int(extruders.size()); extruder_nr++)
             {
-                if ( ! extruder_is_used[extruder_nr]) continue;
+                if (! extruder_is_used[extruder_nr])
+                    continue;
                 max_line_width = std::max(max_line_width, extruders[extruder_nr].settings.get<coord_t>("skirt_brim_line_width"));
             }
         }

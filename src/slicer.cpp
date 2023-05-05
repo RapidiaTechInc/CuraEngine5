@@ -995,8 +995,8 @@ void Slicer::makePolygons(Mesh& mesh, SlicingTolerance slicing_tolerance, std::v
     }
 
     size_t layer_apply_initial_xy_offset = 0;
-    if (layers.size() > 0 && layers[0].polygons.size() == 0 && ! mesh.settings.get<bool>("support_mesh") && ! mesh.settings.get<bool>("anti_overhang_mesh") && ! mesh.settings.get<bool>("cutting_mesh")
-        && ! mesh.settings.get<bool>("infill_mesh"))
+    if (layers.size() > 0 && layers[0].polygons.size() == 0 && ! mesh.settings.get<bool>("support_mesh") && ! mesh.settings.get<bool>("anti_overhang_mesh") && ! mesh.settings.get<bool>("support_modifier_mesh")
+        && ! mesh.settings.get<bool>("cutting_mesh") && ! mesh.settings.get<bool>("infill_mesh"))
     {
         layer_apply_initial_xy_offset = 1;
     }
@@ -1005,43 +1005,40 @@ void Slicer::makePolygons(Mesh& mesh, SlicingTolerance slicing_tolerance, std::v
     const coord_t xy_offset = mesh.settings.get<coord_t>("xy_offset");
     const coord_t xy_offset_0 = mesh.settings.get<coord_t>("xy_offset_layer_0");
     const coord_t xy_offset_hole = mesh.settings.get<coord_t>("hole_xy_offset");
-    cura::parallel_for<size_t>
-    (
-        0,
-        layers.size(),
-        [&layers, layer_apply_initial_xy_offset, xy_offset, xy_offset_0, xy_offset_hole](size_t layer_nr)
-        {
-            const coord_t xy_offset_local = (layer_nr <= layer_apply_initial_xy_offset) ? xy_offset_0 : xy_offset;
-            if (xy_offset_local != 0)
-            {
-                layers[layer_nr].polygons = layers[layer_nr].polygons.offset(xy_offset_local, ClipperLib::JoinType::jtRound);
-            }
-            if (xy_offset_hole != 0)
-            {
-                auto parts = layers[layer_nr].polygons.splitIntoParts();
-                layers[layer_nr].polygons.clear();
+    cura::parallel_for<size_t>(0,
+                               layers.size(),
+                               [&layers, layer_apply_initial_xy_offset, xy_offset, xy_offset_0, xy_offset_hole](size_t layer_nr)
+                               {
+                                   const coord_t xy_offset_local = (layer_nr <= layer_apply_initial_xy_offset) ? xy_offset_0 : xy_offset;
+                                   if (xy_offset_local != 0)
+                                   {
+                                       layers[layer_nr].polygons = layers[layer_nr].polygons.offset(xy_offset_local, ClipperLib::JoinType::jtRound);
+                                   }
+                                   if (xy_offset_hole != 0)
+                                   {
+                                       auto parts = layers[layer_nr].polygons.splitIntoParts();
+                                       layers[layer_nr].polygons.clear();
 
-                for (auto& part : parts)
-                {
-                    Polygons holes;
-                    Polygons outline;
-                    for (const PolygonRef poly : part)
-                    {
-                        if (poly.orientation())
-                        {
-                            outline.add(poly);
-                        }
-                        else
-                        {
-                            holes.add(poly.offset(xy_offset_hole));
-                        }
-                    }
+                                       for (auto& part : parts)
+                                       {
+                                           Polygons holes;
+                                           Polygons outline;
+                                           for (const PolygonRef poly : part)
+                                           {
+                                               if (poly.orientation())
+                                               {
+                                                   outline.add(poly);
+                                               }
+                                               else
+                                               {
+                                                   holes.add(poly.offset(xy_offset_hole));
+                                               }
+                                           }
 
-                    layers[layer_nr].polygons.add(outline.difference(holes.unionPolygons()));
-                }
-            }
-        }
-    );
+                                           layers[layer_nr].polygons.add(outline.difference(holes.unionPolygons()));
+                                       }
+                                   }
+                               });
 
     mesh.expandXY(xy_offset);
 }
