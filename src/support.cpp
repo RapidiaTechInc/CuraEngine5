@@ -225,16 +225,25 @@ std::vector<Polygons> AreaSupport::computeExtruderRegions(const SliceDataStorage
         if (extruder_nr == default_extruder_nr)
             continue; // default region is set above.
 
-        const Polygons& extruder_region = supportLayer.support_extruder_nr.at(extruder_nr);
+        Polygons extruder_region = supportLayer.support_extruder_nr.at(extruder_nr);
         // early-out
         if (extruder_region.empty())
             continue;
 
+        // union polygons to ensure that largest posible continuous support islands are generated and to
+        // avoid a bug where the overlap of modifier meshes is interpreted as a hole when performing difference 
+        if (extruder_region.size() > 1)
+        {
+            extruder_region = extruder_region.unionPolygons(extruder_region);
+        }
         // DEBUG (uncomment)
         extruder_regions[extruder_nr] = global_support_areas.intersection(extruder_region);
 
+        
         // extruder_regions[extruder_nr] \= extruder_region
         extruder_regions[default_extruder_nr] = extruder_regions[default_extruder_nr].difference(extruder_region);
+        
+        
     }
 
     return extruder_regions;
