@@ -209,6 +209,8 @@ public:
     Polygons support_mesh; //!< Areas from support meshes which should NOT be supported by more support
     Polygons anti_overhang; //!< Areas where no overhang should be detected.
     std::vector<Polygons> support_extruder_nr; //! Areas with a particular extruder set.
+    std::vector<Polygons> upper_skin_areas; //! Areas that will be printed with the structure of interface, but with the infill extruder. Indexed by extruder, same as the infill area above
+    std::vector<Polygons> lower_skin_areas; //! Same as upper_skin_areas, but seperate because interface is dealt with independantly as roofs and bottoms and skin mimics interface
 
     // returns true if any non-default extruder region is non-empty
     inline bool has_support_extruder_regions(int default_extruder_nr=-1) const
@@ -218,6 +220,26 @@ public:
         {
             if (i++ == default_extruder_nr) continue;
             if (!extruder_region.empty()) return true;
+        }
+        return false;
+    }
+
+    inline bool extruder_used_for_upper_skin(size_t extruder_nr) const
+    {
+        if (extruder_nr >= (upper_skin_areas.size() - 1)){
+            if (!upper_skin_areas[extruder_nr].empty()){
+                return true;
+            }
+        }
+        return false;
+    }
+
+    inline bool extruder_used_for_lower_skin(size_t extruder_nr) const
+    {
+        if (extruder_nr >= (lower_skin_areas.size() - 1)){
+            if (!lower_skin_areas[extruder_nr].empty()){
+                return true;
+            }
         }
         return false;
     }
