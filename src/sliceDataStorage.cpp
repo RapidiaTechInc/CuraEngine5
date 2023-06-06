@@ -517,6 +517,17 @@ std::vector<bool> SliceDataStorage::getExtrudersUsed(const LayerIndex layer_nr) 
             {
                 ret[mesh_group_settings.get<ExtruderTrain&>("support_roof_extruder_nr").extruder_nr] = true;
             }
+            for (int extruder_nr = 0; extruder_nr < ret.size(); extruder_nr++)
+            {
+                if (support_layer.extruder_used_for_upper_skin(extruder_nr))
+                {
+                    ret[extruder_nr] = true;
+                }
+                if (support_layer.extruder_used_for_lower_skin(extruder_nr))
+                {
+                    ret[extruder_nr] = true;
+                }
+            }
         }
     }
 

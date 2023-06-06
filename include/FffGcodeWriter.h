@@ -25,6 +25,12 @@ class SliceMeshStorage;
 class SliceLayer;
 class SliceLayerPart;
 class TimeKeeper;
+enum class SkinOrInterface
+{
+    SKIN,
+    INTERFACE,
+};
+// class SkinOrInterface;
 
 /*!
  * Secondary stage in Fused Filament Fabrication processing: The generated polygons are used in the gcode generation.
@@ -591,7 +597,7 @@ private:
      * \param gcodeLayer The initial planning of the g-code of the layer.
      * \return Whether any support skin was added to the layer plan.
      */
-    bool addSupportRoofsToGCode(const SliceDataStorage& storage, LayerPlan& gcodeLayer) const;
+    bool addSupportRoofsOrUpperSkinToGCode(const SliceDataStorage& storage, LayerPlan& gcodeLayer, SkinOrInterface skin_or_interface, size_t extruder_nr) const;
 
     /*!
      * Add the support bottoms to the layer plan \p gcodeLayer of the current

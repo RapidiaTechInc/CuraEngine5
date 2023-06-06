@@ -2773,16 +2773,21 @@ bool FffGcodeWriter::addSupportToGCode(const SliceDataStorage& storage, LayerPla
     const size_t support_bottom_extruder_nr = mesh_group_settings.get<ExtruderTrain&>("support_bottom_extruder_nr").extruder_nr;
 
     const SupportLayer& support_layer = storage.support.supportLayers[std::max(0, gcode_layer.getLayerNr())];
-    if (support_layer.support_bottom.empty() && support_layer.support_roof.empty() && support_layer.support_infill_parts.empty())
+    if (support_layer.support_bottom.empty() && support_layer.support_roof.empty() && support_layer.support_infill_parts.empty() && ! support_layer.extruder_used_for_upper_skin(extruder_nr))
     {
         return support_added;
     }
 
     support_added |= processSupportInfill(storage, gcode_layer, extruder_nr);
 
+    if (support_layer.extruder_used_for_upper_skin(extruder_nr))
+    {
+        support_added |= addSupportRoofsOrUpperSkinToGCode(storage, gcode_layer, SkinOrInterface::SKIN, extruder_nr);
+    }
+
     if (extruder_nr == support_roof_extruder_nr)
     {
-        support_added |= addSupportRoofsToGCode(storage, gcode_layer);
+        support_added |= addSupportRoofsOrUpperSkinToGCode(storage, gcode_layer, SkinOrInterface::INTERFACE, extruder_nr);
     }
     if (extruder_nr == support_bottom_extruder_nr)
     {
@@ -3044,16 +3049,32 @@ bool FffGcodeWriter::processSupportInfill(const SliceDataStorage& storage, Layer
 }
 
 
-bool FffGcodeWriter::addSupportRoofsToGCode(const SliceDataStorage& storage, LayerPlan& gcode_layer) const
+bool FffGcodeWriter::addSupportRoofsOrUpperSkinToGCode(const SliceDataStorage& storage, LayerPlan& gcode_layer, SkinOrInterface skin_or_interface, size_t extruder_nr) const
 {
     const SupportLayer& support_layer = storage.support.supportLayers[std::max(0, gcode_layer.getLayerNr())];
 
-    if (! storage.support.generated || gcode_layer.getLayerNr() > storage.support.layer_nr_max_filled_layer || support_layer.support_roof.empty())
+    size_t roof_extruder_nr;
+    Polygons infill_outline;
+    if (skin_or_interface == SkinOrInterface::INTERFACE)
+    {
+        roof_extruder_nr = Application::getInstance().current_slice->scene.current_mesh_group->settings.get<ExtruderTrain&>("support_roof_extruder_nr").extruder_nr;
+        infill_outline = support_layer.support_roof;
+    }
+    else if (skin_or_interface == SkinOrInterface::SKIN)
+    {
+        roof_extruder_nr = extruder_nr;
+        infill_outline = support_layer.upper_skin_areas[extruder_nr];
+    }
+    else
+    {
+        assert(false);
+    }
+
+    if (! storage.support.generated || gcode_layer.getLayerNr() > storage.support.layer_nr_max_filled_layer || infill_outline.empty())
     {
         return false; // No need to generate support roof if there's no support.
     }
 
-    const size_t roof_extruder_nr = Application::getInstance().current_slice->scene.current_mesh_group->settings.get<ExtruderTrain&>("support_roof_extruder_nr").extruder_nr;
     const ExtruderTrain& roof_extruder = Application::getInstance().current_slice->scene.extruders[roof_extruder_nr];
 
     const EFillMethod pattern = roof_extruder.settings.get<EFillMethod>("support_roof_pattern");
@@ -3089,12 +3110,11 @@ bool FffGcodeWriter::addSupportRoofsToGCode(const SliceDataStorage& storage, Lay
         support_roof_line_distance *= roof_extruder.settings.get<Ratio>("initial_layer_line_width_factor");
     }
 
-    Polygons infill_outline = support_layer.support_roof;
     Polygons wall;
     // make sure there is a wall if this is on the first layer
     if (gcode_layer.getLayerNr() == 0)
     {
-        wall = support_layer.support_roof.offset(-support_roof_line_width / 2);
+        wall = infill_outline.offset(-support_roof_line_width / 2);
         infill_outline = wall.offset(-support_roof_line_width / 2);
     }
 

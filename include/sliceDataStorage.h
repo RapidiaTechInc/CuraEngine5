@@ -226,7 +226,8 @@ public:
 
     inline bool extruder_used_for_upper_skin(size_t extruder_nr) const
     {
-        if (extruder_nr >= (upper_skin_areas.size() - 1)){
+        if (upper_skin_areas.size() > 0 && extruder_nr <= (upper_skin_areas.size() - 1))
+        {
             if (!upper_skin_areas[extruder_nr].empty()){
                 return true;
             }
@@ -236,7 +237,8 @@ public:
 
     inline bool extruder_used_for_lower_skin(size_t extruder_nr) const
     {
-        if (extruder_nr >= (lower_skin_areas.size() - 1)){
+        if (lower_skin_areas.size() > 0 && extruder_nr <= (lower_skin_areas.size() - 1))
+        {
             if (!lower_skin_areas[extruder_nr].empty()){
                 return true;
             }
