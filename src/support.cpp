@@ -98,8 +98,8 @@ bool AreaSupport::handleSupportModifierMesh(SliceDataStorage& storage, const Set
     else if (mesh_settings.get<bool>("support_modifier_mesh"))
     {
         modifier_type = SUPPORT_MODIFIER;
-
-    } else if (mesh_settings.get<bool>("support_mesh_drop_down"))
+    }
+    else if (mesh_settings.get<bool>("support_mesh_drop_down"))
     {
         modifier_type = SUPPORT_DROP_DOWN;
     }
@@ -231,7 +231,7 @@ std::vector<Polygons> AreaSupport::computeExtruderRegions(const SliceDataStorage
             continue;
 
         // union polygons to ensure that largest posible continuous support islands are generated and to
-        // avoid a bug where the overlap of modifier meshes is interpreted as a hole when performing difference 
+        // avoid a bug where the overlap of modifier meshes is interpreted as a hole when performing difference
         if (extruder_region.size() > 1)
         {
             extruder_region = extruder_region.unionPolygons(extruder_region);
@@ -239,11 +239,9 @@ std::vector<Polygons> AreaSupport::computeExtruderRegions(const SliceDataStorage
         // DEBUG (uncomment)
         extruder_regions[extruder_nr] = global_support_areas.intersection(extruder_region);
 
-        
+
         // extruder_regions[extruder_nr] \= extruder_region
         extruder_regions[default_extruder_nr] = extruder_regions[default_extruder_nr].difference(extruder_region);
-        
-        
     }
 
     return extruder_regions;
@@ -1839,6 +1837,7 @@ void AreaSupport::generateSupportRoof(SliceDataStorage& storage, const SliceMesh
     const Settings& mesh_group_settings = Application::getInstance().current_slice->scene.current_mesh_group->settings;
     const coord_t layer_height = mesh_group_settings.get<coord_t>("layer_height");
     const size_t roof_layer_count = round_divide(mesh.settings.get<coord_t>("support_roof_height"), layer_height); // Number of layers in support roof.
+    const size_t skin_layer_count = 2; // TODO replace this with a settings call
     if (roof_layer_count <= 0)
     {
         return;
@@ -1855,15 +1854,30 @@ void AreaSupport::generateSupportRoof(SliceDataStorage& storage, const SliceMesh
     std::vector<SupportLayer>& support_layers = storage.support.supportLayers;
     for (LayerIndex layer_idx = 0; layer_idx < static_cast<int>(support_layers.size() - z_distance_top); layer_idx++)
     {
+        // create polygons for interface and generate roofs
         const LayerIndex top_layer_idx_above = std::min(static_cast<LayerIndex>(support_layers.size() - 1), layer_idx + roof_layer_count + z_distance_top); // Maximum layer of the model that generates support roof.
-        Polygons mesh_outlines;
+        Polygons model_interface_thickness_higher;
         for (float layer_idx_above = top_layer_idx_above; layer_idx_above > layer_idx + z_distance_top; layer_idx_above -= z_skip)
         {
-            mesh_outlines.add(mesh.layers[std::round(layer_idx_above)].getOutlines());
+            model_interface_thickness_higher.add(mesh.layers[std::round(layer_idx_above)].getOutlines());
         }
         Polygons roofs;
-        generateSupportInterfaceLayer(global_support_areas_per_layer[layer_idx], mesh_outlines, roof_line_width, roof_outline_offset, minimum_roof_area, roofs);
+        generateSupportInterfaceLayer(global_support_areas_per_layer[layer_idx], model_interface_thickness_higher, roof_line_width, roof_outline_offset, minimum_roof_area, roofs);
         support_layers[layer_idx].support_roof.add(roofs);
+
+        // create polygons for space just below interface and generate skin
+        const LayerIndex top_skin_layer_idx_above = std::min(static_cast<LayerIndex>(support_layers.size() - 1), layer_idx + skin_layer_count + roof_layer_count + z_distance_top); // Maximum layer of the model that generates support roof.
+        Polygons model_skin_plus_interface_thickness_higher;
+        for (float layer_idx_above = top_skin_layer_idx_above; layer_idx_above > layer_idx + z_distance_top; layer_idx_above -= z_skip)
+        {
+            model_skin_plus_interface_thickness_higher.add(mesh.layers[std::round(layer_idx_above)].getOutlines());
+        }
+        Polygons skins;
+        // Because roofs were calculated first, if present they were already subtracted from global_support_areas
+        // Hence, no skin will be generated where interface is to be placed
+        generateSupportInterfaceLayer(global_support_areas_per_layer[layer_idx], model_skin_plus_interface_thickness_higher, roof_line_width, roof_outline_offset, minimum_roof_area, skins);
+        const size_t extruder_nr = 0; // TODO, deal with extruder number
+        support_layers[layer_idx].upper_skin_areas.push_back(skins);
     }
 
     // Remove support in between the support roof and the model. Subtracts the roof polygons from the support polygons on the layers above it.
