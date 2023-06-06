@@ -208,7 +208,7 @@ public:
     Polygons support_mesh_drop_down; //!< Areas from support meshes which should be supported by more support
     Polygons support_mesh; //!< Areas from support meshes which should NOT be supported by more support
     Polygons anti_overhang; //!< Areas where no overhang should be detected.
-    std::vector<Polygons> support_extruder_nr; //! Areas with a particular extruder set.
+    std::vector<Polygons> sliced_modifier_meshes_by_extruder; //! Areas defined by support modifier meshes that should be printed with a given extruder.
     std::vector<Polygons> upper_skin_areas; //! Areas that will be printed with the structure of interface, but with the infill extruder. Indexed by extruder, same as the infill area above
     std::vector<Polygons> lower_skin_areas; //! Same as upper_skin_areas, but seperate because interface is dealt with independantly as roofs and bottoms and skin mimics interface
 
@@ -216,7 +216,7 @@ public:
     inline bool has_support_extruder_regions(int default_extruder_nr=-1) const
     {
         int i = 0;
-        for (const Polygons& extruder_region : support_extruder_nr)
+        for (const Polygons& extruder_region : sliced_modifier_meshes_by_extruder)
         {
             if (i++ == default_extruder_nr) continue;
             if (!extruder_region.empty()) return true;

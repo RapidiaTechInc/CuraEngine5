@@ -173,7 +173,7 @@ private:
      * \param mesh The mesh to generate support roof for.
      * \param global_support_areas_per_layer the global support areas on each layer.
      */
-    static void generateSupportRoof(SliceDataStorage& storage, const SliceMeshStorage& mesh, std::vector<Polygons>& global_support_areas_per_layer);
+    static void generateSupportRoofAndUpperSkin(SliceDataStorage& storage, const SliceMeshStorage& mesh, std::vector<Polygons>& global_support_areas_per_layer);
 
     /*!
      * \brief Generate a single layer of support interface.

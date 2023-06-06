@@ -66,13 +66,13 @@ bool AreaSupport::handleSupportModifierMesh(SliceDataStorage& storage, const Set
                 const SlicerLayer& slicer_layer = slicer->layers[layer_nr];
 
                 // use this support extruder.
-                while (support_layer.support_extruder_nr.size() <= extruder_nr[layer_category])
+                while (support_layer.sliced_modifier_meshes_by_extruder.size() <= extruder_nr[layer_category])
                 {
-                    support_layer.support_extruder_nr.emplace_back();
+                    support_layer.sliced_modifier_meshes_by_extruder.emplace_back();
                 }
 
                 // (add polygons to the relevant support layer.)
-                support_layer.support_extruder_nr[extruder_nr[layer_category]].add(slicer_layer.polygons);
+                support_layer.sliced_modifier_meshes_by_extruder[extruder_nr[layer_category]].add(slicer_layer.polygons);
             }
         }
     }
@@ -170,7 +170,7 @@ void AreaSupport::splitGlobalSupportAreasIntoSupportInfillParts(SliceDataStorage
         }
 
         // split support regions into parts.
-        std::vector<std::vector<PolygonsPart>> support_islands_per_extruder(std::max(storage.support.supportLayers[layer_nr].support_extruder_nr.size(), default_extruder_nr + 1));
+        std::vector<std::vector<PolygonsPart>> support_islands_per_extruder(std::max(storage.support.supportLayers[layer_nr].sliced_modifier_meshes_by_extruder.size(), default_extruder_nr + 1));
 
         if (storage.support.supportLayers[layer_nr].has_support_extruder_regions(default_extruder_nr))
         {
@@ -214,18 +214,18 @@ std::vector<Polygons> AreaSupport::computeExtruderRegions(const SliceDataStorage
     // Partition into regions where extruder nr has been specified.
     // The region for the default extruder shall be all remaining regions.
     const auto& supportLayer = storage.support.supportLayers[layer_nr];
-    std::vector<Polygons> extruder_regions(std::max(supportLayer.support_extruder_nr.size(), default_extruder_nr + 1));
+    std::vector<Polygons> extruder_regions(std::max(supportLayer.sliced_modifier_meshes_by_extruder.size(), default_extruder_nr + 1));
 
     // Default extruder region is determined differently than the others.
     extruder_regions[default_extruder_nr] = global_support_areas;
 
     // Determine non-default regions (and subtract them from the default region)
-    for (size_t extruder_nr = 0; extruder_nr < supportLayer.support_extruder_nr.size(); ++extruder_nr)
+    for (size_t extruder_nr = 0; extruder_nr < supportLayer.sliced_modifier_meshes_by_extruder.size(); ++extruder_nr)
     {
         if (extruder_nr == default_extruder_nr)
             continue; // default region is set above.
 
-        Polygons extruder_region = supportLayer.support_extruder_nr.at(extruder_nr);
+        Polygons extruder_region = supportLayer.sliced_modifier_meshes_by_extruder.at(extruder_nr);
         // early-out
         if (extruder_region.empty())
             continue;
@@ -726,7 +726,7 @@ void AreaSupport::generateSupportAreas(SliceDataStorage& storage)
         support_layer.anti_overhang = support_layer.anti_overhang.unionPolygons();
         support_layer.support_mesh_drop_down = support_layer.support_mesh_drop_down.unionPolygons();
         support_layer.support_mesh = support_layer.support_mesh.unionPolygons();
-        for (auto& support_extruder_nrx : support_layer.support_extruder_nr)
+        for (auto& support_extruder_nrx : support_layer.sliced_modifier_meshes_by_extruder)
         {
             support_extruder_nrx = support_extruder_nrx.unionPolygons();
         }
@@ -803,9 +803,9 @@ void AreaSupport::generateSupportAreas(SliceDataStorage& storage)
         }
         if (mesh.settings.get<bool>("support_roof_enable"))
         {
-            generateSupportRoof(storage, mesh, global_support_areas_per_layer);
+            generateSupportRoofAndUpperSkin(storage, mesh, global_support_areas_per_layer);
         }
-        }
+    }
 
     // split the global support areas into parts for later gradual support infill generation
     AreaSupport::splitGlobalSupportAreasIntoSupportInfillParts(storage, global_support_areas_per_layer, storage.print_layer_count);
@@ -1831,7 +1831,7 @@ void AreaSupport::generateSupportBottom(SliceDataStorage& storage, const SliceMe
     }
 }
 
-void AreaSupport::generateSupportRoof(SliceDataStorage& storage, const SliceMeshStorage& mesh, std::vector<Polygons>& global_support_areas_per_layer)
+void AreaSupport::generateSupportRoofAndUpperSkin(SliceDataStorage& storage, const SliceMeshStorage& mesh, std::vector<Polygons>& global_support_areas_per_layer)
 {
     const Settings& mesh_group_settings = Application::getInstance().current_slice->scene.current_mesh_group->settings;
     const coord_t layer_height = mesh_group_settings.get<coord_t>("layer_height");
