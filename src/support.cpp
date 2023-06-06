@@ -805,6 +805,7 @@ void AreaSupport::generateSupportAreas(SliceDataStorage& storage)
         {
             generateSupportRoofAndUpperSkin(storage, mesh, global_support_areas_per_layer);
         }
+        generateSupportLowerSkin(storage, mesh, global_support_areas_per_layer);
     }
 
     // split the global support areas into parts for later gradual support infill generation
@@ -1831,6 +1832,41 @@ void AreaSupport::generateSupportBottom(SliceDataStorage& storage, const SliceMe
     }
 }
 
+void AreaSupport::generateSupportLowerSkin(SliceDataStorage& storage, const SliceMeshStorage& mesh, std::vector<Polygons>& global_support_areas_per_layer)
+{
+    const Settings& mesh_group_settings = Application::getInstance().current_slice->scene.current_mesh_group->settings;
+    const coord_t layer_height = mesh_group_settings.get<coord_t>("layer_height");
+    const size_t lower_skin_layer_count = round_divide(mesh.settings.get<coord_t>("support_lower_skin_height"), layer_height); // Number of layers in lower skin.
+    const size_t bottom_layer_count = round_divide(mesh.settings.get<coord_t>("support_bottom_height"), layer_height); // Number of layers in support bottom.
+    if (lower_skin_layer_count <= 0)
+    {
+        return;
+    }
+    const size_t default_infill_extruder_nr = mesh_group_settings.get<ExtruderTrain&>("support_infill_extruder_nr").extruder_nr;
+    const coord_t z_distance_bottom = round_up_divide(mesh.settings.get<coord_t>("support_bottom_distance"), layer_height); // Number of layers between support bottom and model.
+    const size_t skip_layer_count = std::max(uint64_t(1), round_divide(mesh.settings.get<coord_t>("support_interface_skip_height"), layer_height)); // Resolution of generating support bottoms above model.
+    const coord_t bottom_line_width = mesh_group_settings.get<ExtruderTrain&>("support_bottom_extruder_nr").settings.get<coord_t>("support_bottom_line_width");
+    const coord_t bottom_outline_offset = mesh_group_settings.get<ExtruderTrain&>("support_bottom_extruder_nr").settings.get<coord_t>("support_bottom_offset");
+
+    const size_t scan_count = std::max(size_t(1), (lower_skin_layer_count - 1) / skip_layer_count); // How many measurements to take to generate bottom areas.
+    const float z_skip = std::max(1.0f, float(lower_skin_layer_count - 1) / float(scan_count)); // How many layers to skip between measurements. Using float for better spread, but this is later rounded.
+    const double minimum_bottom_area = mesh.settings.get<double>("minimum_bottom_area");
+
+    std::vector<SupportLayer>& support_layers = storage.support.supportLayers;
+    for (unsigned int layer_idx = support_layers.size() - 1; static_cast<int>(layer_idx) >= static_cast<int>(z_distance_bottom); layer_idx--)
+    {
+        const unsigned int bottom_layer_idx_below = std::max(0, int(layer_idx) - int(bottom_layer_count) - int(z_distance_bottom) - int(lower_skin_layer_count));
+        Polygons model_skin_plus_interface_layers_lower;
+        for (float layer_idx_below = bottom_layer_idx_below; std::round(layer_idx_below) < (int)(layer_idx - z_distance_bottom); layer_idx_below += z_skip)
+        {
+            model_skin_plus_interface_layers_lower.add(mesh.layers[std::round(layer_idx_below)].getOutlines());
+        }
+        Polygons lower_skins;
+        generateSupportInterfaceLayer(global_support_areas_per_layer[layer_idx], model_skin_plus_interface_layers_lower, bottom_line_width, bottom_outline_offset, minimum_bottom_area, lower_skins);
+        support_layers[layer_idx].lower_skin_areas = AreaSupport::computeExtruderRegions(storage, lower_skins, layer_idx, default_infill_extruder_nr);
+    }
+}
+
 void AreaSupport::generateSupportRoofAndUpperSkin(SliceDataStorage& storage, const SliceMeshStorage& mesh, std::vector<Polygons>& global_support_areas_per_layer)
 {
     const Settings& mesh_group_settings = Application::getInstance().current_slice->scene.current_mesh_group->settings;
@@ -1876,7 +1912,6 @@ void AreaSupport::generateSupportRoofAndUpperSkin(SliceDataStorage& storage, con
         // Because roofs were calculated first, if present they were already subtracted from global_support_areas
         // Hence, no skin will be generated where interface is to be placed
         generateSupportInterfaceLayer(global_support_areas_per_layer[layer_idx], model_skin_plus_interface_thickness_higher, roof_line_width, roof_outline_offset, minimum_roof_area, skins);
-        const size_t extruder_nr = 0; // TODO, deal with extruder number
         support_layers[layer_idx].upper_skin_areas = AreaSupport::computeExtruderRegions(storage, skins, layer_idx, default_infill_extruder_nr);
     }
 

@@ -2773,7 +2773,8 @@ bool FffGcodeWriter::addSupportToGCode(const SliceDataStorage& storage, LayerPla
     const size_t support_bottom_extruder_nr = mesh_group_settings.get<ExtruderTrain&>("support_bottom_extruder_nr").extruder_nr;
 
     const SupportLayer& support_layer = storage.support.supportLayers[std::max(0, gcode_layer.getLayerNr())];
-    if (support_layer.support_bottom.empty() && support_layer.support_roof.empty() && support_layer.support_infill_parts.empty() && ! support_layer.extruder_used_for_upper_skin(extruder_nr))
+    if (support_layer.support_bottom.empty() && support_layer.support_roof.empty() && support_layer.support_infill_parts.empty() && ! support_layer.extruder_used_for_upper_skin(extruder_nr)
+        && ! support_layer.extruder_used_for_lower_skin(extruder_nr))
     {
         return support_added;
     }
@@ -2785,13 +2786,18 @@ bool FffGcodeWriter::addSupportToGCode(const SliceDataStorage& storage, LayerPla
         support_added |= addSupportRoofsOrUpperSkinToGCode(storage, gcode_layer, SkinOrInterface::SKIN, extruder_nr);
     }
 
+    if (support_layer.extruder_used_for_lower_skin(extruder_nr))
+    {
+        support_added |= addSupportBottomsOrLowerSkinToGCode(storage, gcode_layer, SkinOrInterface::SKIN, extruder_nr);
+    }
+
     if (extruder_nr == support_roof_extruder_nr)
     {
         support_added |= addSupportRoofsOrUpperSkinToGCode(storage, gcode_layer, SkinOrInterface::INTERFACE, extruder_nr);
     }
     if (extruder_nr == support_bottom_extruder_nr)
     {
-        support_added |= addSupportBottomsToGCode(storage, gcode_layer);
+        support_added |= addSupportBottomsOrLowerSkinToGCode(storage, gcode_layer, SkinOrInterface::INTERFACE, extruder_nr);
     }
     return support_added;
 }
@@ -3175,16 +3181,33 @@ bool FffGcodeWriter::addSupportRoofsOrUpperSkinToGCode(const SliceDataStorage& s
     return true;
 }
 
-bool FffGcodeWriter::addSupportBottomsToGCode(const SliceDataStorage& storage, LayerPlan& gcode_layer) const
+bool FffGcodeWriter::addSupportBottomsOrLowerSkinToGCode(const SliceDataStorage& storage, LayerPlan& gcode_layer, SkinOrInterface skin_or_interface, size_t extruder_nr) const
 {
     const SupportLayer& support_layer = storage.support.supportLayers[std::max(0, gcode_layer.getLayerNr())];
 
-    if (! storage.support.generated || gcode_layer.getLayerNr() > storage.support.layer_nr_max_filled_layer || support_layer.support_bottom.empty())
+    size_t bottom_extruder_nr;
+    Polygons infill_outline;
+
+    if (skin_or_interface == SkinOrInterface::INTERFACE)
+    {
+        bottom_extruder_nr = Application::getInstance().current_slice->scene.current_mesh_group->settings.get<ExtruderTrain&>("support_bottom_extruder_nr").extruder_nr;
+        infill_outline = support_layer.support_bottom;
+    }
+    else if (skin_or_interface == SkinOrInterface::SKIN)
+    {
+        bottom_extruder_nr = extruder_nr;
+        infill_outline = support_layer.lower_skin_areas[extruder_nr];
+    }
+    else
+    {
+        assert(false);
+    }
+
+    if (! storage.support.generated || gcode_layer.getLayerNr() > storage.support.layer_nr_max_filled_layer || infill_outline.empty())
     {
         return false; // No need to generate support bottoms if there's no support.
     }
 
-    const size_t bottom_extruder_nr = Application::getInstance().current_slice->scene.current_mesh_group->settings.get<ExtruderTrain&>("support_bottom_extruder_nr").extruder_nr;
     const ExtruderTrain& bottom_extruder = Application::getInstance().current_slice->scene.extruders[bottom_extruder_nr];
 
     const EFillMethod pattern = bottom_extruder.settings.get<EFillMethod>("support_bottom_pattern");
@@ -3218,7 +3241,7 @@ bool FffGcodeWriter::addSupportBottomsToGCode(const SliceDataStorage& storage, L
     Infill bottom_computation(pattern,
                               zig_zaggify_infill,
                               connect_polygons,
-                              support_layer.support_bottom,
+                              infill_outline,
                               gcode_layer.configs_storage.support_bottom_config.getLineWidth(),
                               support_bottom_line_distance,
                               support_bottom_overlap,

@@ -161,6 +161,21 @@ private:
      */
     static void generateSupportBottom(SliceDataStorage& storage, const SliceMeshStorage& mesh, std::vector<Polygons>& global_support_areas_per_layer);
 
+        /*!
+     * Generate support lower skin areas for a given mesh.
+     *
+     * The skin areas are separated from the normal support areas in the slice
+     * data storage, and stored separately in a different field of the slice
+     * data storage. Must be calculated after interface calculation to ensure that
+     * the interface is generated preferentially.
+     *
+     * \param storage Where to find the previously generated support areas and
+     * where to output the new support bottom areas.
+     * \param mesh The mesh to generate support for.
+     * \param global_support_areas_per_layer the global support areas on each layer.
+     */
+    static void generateSupportLowerSkin(SliceDataStorage& storage, const SliceMeshStorage& mesh, std::vector<Polygons>& global_support_areas_per_layer);
+
     /*!
      * Generate support roof areas for a given mesh.
      *
