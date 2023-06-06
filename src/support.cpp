@@ -1837,7 +1837,7 @@ void AreaSupport::generateSupportRoof(SliceDataStorage& storage, const SliceMesh
     const Settings& mesh_group_settings = Application::getInstance().current_slice->scene.current_mesh_group->settings;
     const coord_t layer_height = mesh_group_settings.get<coord_t>("layer_height");
     const size_t roof_layer_count = round_divide(mesh.settings.get<coord_t>("support_roof_height"), layer_height); // Number of layers in support roof.
-    const size_t skin_layer_count = 2; // TODO replace this with a settings call
+    const size_t skin_layer_count = round_divide(mesh.settings.get<coord_t>("support_upper_skin_height"), layer_height); // Number of layers for support skin
     if (roof_layer_count <= 0)
     {
         return;
