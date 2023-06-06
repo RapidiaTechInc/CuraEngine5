@@ -1846,6 +1846,7 @@ void AreaSupport::generateSupportRoof(SliceDataStorage& storage, const SliceMesh
     const size_t skip_layer_count = std::max(uint64_t(1), round_divide(mesh.settings.get<coord_t>("support_interface_skip_height"), layer_height)); // Resolution of generating support roof below model.
     const coord_t roof_line_width = mesh_group_settings.get<ExtruderTrain&>("support_roof_extruder_nr").settings.get<coord_t>("support_roof_line_width");
     const coord_t roof_outline_offset = mesh_group_settings.get<ExtruderTrain&>("support_roof_extruder_nr").settings.get<coord_t>("support_roof_offset");
+    const size_t default_infill_extruder_nr = mesh_group_settings.get<ExtruderTrain&>("support_infill_extruder_nr").extruder_nr;
 
     const size_t scan_count = std::max(size_t(1), (roof_layer_count - 1) / skip_layer_count); // How many measurements to take to generate roof areas.
     const float z_skip = std::max(1.0f, float(roof_layer_count - 1) / float(scan_count)); // How many layers to skip between measurements. Using float for better spread, but this is later rounded.
@@ -1877,7 +1878,7 @@ void AreaSupport::generateSupportRoof(SliceDataStorage& storage, const SliceMesh
         // Hence, no skin will be generated where interface is to be placed
         generateSupportInterfaceLayer(global_support_areas_per_layer[layer_idx], model_skin_plus_interface_thickness_higher, roof_line_width, roof_outline_offset, minimum_roof_area, skins);
         const size_t extruder_nr = 0; // TODO, deal with extruder number
-        support_layers[layer_idx].upper_skin_areas.push_back(skins);
+        support_layers[layer_idx].upper_skin_areas = AreaSupport::computeExtruderRegions(storage, skins, layer_idx, default_infill_extruder_nr);
     }
 
     // Remove support in between the support roof and the model. Subtracts the roof polygons from the support polygons on the layers above it.
