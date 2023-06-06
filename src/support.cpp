@@ -797,16 +797,15 @@ void AreaSupport::generateSupportAreas(SliceDataStorage& storage)
         {
             continue;
         }
-
+        if (mesh.settings.get<bool>("support_bottom_enable")) // must happen before skin generation to ensure that interface takes president over skin
+        {
+            generateSupportBottom(storage, mesh, global_support_areas_per_layer);
+        }
         if (mesh.settings.get<bool>("support_roof_enable"))
         {
             generateSupportRoof(storage, mesh, global_support_areas_per_layer);
         }
-        if (mesh.settings.get<bool>("support_bottom_enable"))
-        {
-            generateSupportBottom(storage, mesh, global_support_areas_per_layer);
         }
-    }
 
     // split the global support areas into parts for later gradual support infill generation
     AreaSupport::splitGlobalSupportAreasIntoSupportInfillParts(storage, global_support_areas_per_layer, storage.print_layer_count);
