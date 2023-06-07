@@ -2783,21 +2783,21 @@ bool FffGcodeWriter::addSupportToGCode(const SliceDataStorage& storage, LayerPla
 
     if (support_layer.extruder_used_for_upper_skin(extruder_nr))
     {
-        support_added |= addSupportRoofsOrUpperSkinToGCode(storage, gcode_layer, SkinOrInterface::SKIN, extruder_nr);
+        support_added |= addSupportRoofsOrUpperSkinToGCode(storage, gcode_layer, cura::SkinOrInterface::SKIN, extruder_nr);
     }
 
     if (support_layer.extruder_used_for_lower_skin(extruder_nr))
     {
-        support_added |= addSupportBottomsOrLowerSkinToGCode(storage, gcode_layer, SkinOrInterface::SKIN, extruder_nr);
+        support_added |= addSupportBottomsOrLowerSkinToGCode(storage, gcode_layer, cura::SkinOrInterface::SKIN, extruder_nr);
     }
 
     if (extruder_nr == support_roof_extruder_nr)
     {
-        support_added |= addSupportRoofsOrUpperSkinToGCode(storage, gcode_layer, SkinOrInterface::INTERFACE, extruder_nr);
+        support_added |= addSupportRoofsOrUpperSkinToGCode(storage, gcode_layer, cura::SkinOrInterface::INTERFACE, extruder_nr);
     }
     if (extruder_nr == support_bottom_extruder_nr)
     {
-        support_added |= addSupportBottomsOrLowerSkinToGCode(storage, gcode_layer, SkinOrInterface::INTERFACE, extruder_nr);
+        support_added |= addSupportBottomsOrLowerSkinToGCode(storage, gcode_layer, cura::SkinOrInterface::INTERFACE, extruder_nr);
     }
     return support_added;
 }
@@ -3061,12 +3061,12 @@ bool FffGcodeWriter::addSupportRoofsOrUpperSkinToGCode(const SliceDataStorage& s
 
     size_t roof_extruder_nr;
     Polygons infill_outline;
-    if (skin_or_interface == SkinOrInterface::INTERFACE)
+    if (skin_or_interface == cura::SkinOrInterface::INTERFACE)
     {
         roof_extruder_nr = Application::getInstance().current_slice->scene.current_mesh_group->settings.get<ExtruderTrain&>("support_roof_extruder_nr").extruder_nr;
         infill_outline = support_layer.support_roof;
     }
-    else if (skin_or_interface == SkinOrInterface::SKIN)
+    else if (skin_or_interface == cura::SkinOrInterface::SKIN)
     {
         roof_extruder_nr = extruder_nr;
         infill_outline = support_layer.upper_skin_areas[extruder_nr];
@@ -3188,12 +3188,12 @@ bool FffGcodeWriter::addSupportBottomsOrLowerSkinToGCode(const SliceDataStorage&
     size_t bottom_extruder_nr;
     Polygons infill_outline;
 
-    if (skin_or_interface == SkinOrInterface::INTERFACE)
+    if (skin_or_interface == cura::SkinOrInterface::INTERFACE)
     {
         bottom_extruder_nr = Application::getInstance().current_slice->scene.current_mesh_group->settings.get<ExtruderTrain&>("support_bottom_extruder_nr").extruder_nr;
         infill_outline = support_layer.support_bottom;
     }
-    else if (skin_or_interface == SkinOrInterface::SKIN)
+    else if (skin_or_interface == cura::SkinOrInterface::SKIN)
     {
         bottom_extruder_nr = extruder_nr;
         infill_outline = support_layer.lower_skin_areas[extruder_nr];
