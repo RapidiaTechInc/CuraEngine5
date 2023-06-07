@@ -593,7 +593,7 @@ private:
      * \param gcodeLayer The initial planning of the g-code of the layer.
      * \return Whether any support skin was added to the layer plan.
      */
-    bool addSupportRoofsOrUpperSkinToGCode(const SliceDataStorage& storage, LayerPlan& gcodeLayer, SkinOrInterface skin_or_interface, size_t extruder_nr) const;
+    bool addSupportRoofsOrUpperSkinToGCode(const SliceDataStorage& storage, LayerPlan& gcodeLayer, int skin_or_interface, size_t extruder_nr) const;
 
     /*!
      * Add the support bottoms to the layer plan \p gcodeLayer of the current
@@ -603,7 +603,7 @@ private:
      * \param gcodeLayer The initial planning of the g-code of the layer.
      * \return Whether any support skin was added to the layer plan.
      */
-    bool addSupportBottomsOrLowerSkinToGCode(const SliceDataStorage& storage, LayerPlan& gcodeLayer, SkinOrInterface skin_or_interface, size_t extruder_nr) const;
+    bool addSupportBottomsOrLowerSkinToGCode(const SliceDataStorage& storage, LayerPlan& gcodeLayer, int skin_or_interface, size_t extruder_nr) const;
 
 public:
     /*!

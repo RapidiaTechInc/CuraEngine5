@@ -2779,8 +2779,8 @@ bool FffGcodeWriter::addSupportToGCode(const SliceDataStorage& storage, LayerPla
         return support_added;
     }
 
-    const SkinOrInterface SKIN = SkinOrInterface::SKIN;
-    const SkinOrInterface INTERFACE = SkinOrInterface::INTERFACE;
+    const int SKIN = SkinOrInterface::SKIN;
+    const int INTERFACE = SkinOrInterface::INTERFACE;
 
     support_added |= processSupportInfill(storage, gcode_layer, extruder_nr);
 
@@ -3058,18 +3058,18 @@ bool FffGcodeWriter::processSupportInfill(const SliceDataStorage& storage, Layer
 }
 
 
-bool FffGcodeWriter::addSupportRoofsOrUpperSkinToGCode(const SliceDataStorage& storage, LayerPlan& gcode_layer, SkinOrInterface skin_or_interface, size_t extruder_nr) const
+bool FffGcodeWriter::addSupportRoofsOrUpperSkinToGCode(const SliceDataStorage& storage, LayerPlan& gcode_layer, int skin_or_interface, size_t extruder_nr) const
 {
     const SupportLayer& support_layer = storage.support.supportLayers[std::max(0, gcode_layer.getLayerNr())];
 
     size_t roof_extruder_nr;
     Polygons infill_outline;
-    if (skin_or_interface == SkinOrInterface::INTERFACE)
+    if (skin_or_interface == (int)SkinOrInterface::INTERFACE)
     {
         roof_extruder_nr = Application::getInstance().current_slice->scene.current_mesh_group->settings.get<ExtruderTrain&>("support_roof_extruder_nr").extruder_nr;
         infill_outline = support_layer.support_roof;
     }
-    else if (skin_or_interface == SkinOrInterface::SKIN)
+    else if (skin_or_interface == (int)SkinOrInterface::SKIN)
     {
         roof_extruder_nr = extruder_nr;
         infill_outline = support_layer.upper_skin_areas[extruder_nr];
@@ -3184,19 +3184,19 @@ bool FffGcodeWriter::addSupportRoofsOrUpperSkinToGCode(const SliceDataStorage& s
     return true;
 }
 
-bool FffGcodeWriter::addSupportBottomsOrLowerSkinToGCode(const SliceDataStorage& storage, LayerPlan& gcode_layer, SkinOrInterface skin_or_interface, size_t extruder_nr) const
+bool FffGcodeWriter::addSupportBottomsOrLowerSkinToGCode(const SliceDataStorage& storage, LayerPlan& gcode_layer, int skin_or_interface, size_t extruder_nr) const
 {
     const SupportLayer& support_layer = storage.support.supportLayers[std::max(0, gcode_layer.getLayerNr())];
 
     size_t bottom_extruder_nr;
     Polygons infill_outline;
 
-    if (skin_or_interface == SkinOrInterface::INTERFACE)
+    if (skin_or_interface == (int)SkinOrInterface::INTERFACE)
     {
         bottom_extruder_nr = Application::getInstance().current_slice->scene.current_mesh_group->settings.get<ExtruderTrain&>("support_bottom_extruder_nr").extruder_nr;
         infill_outline = support_layer.support_bottom;
     }
-    else if (skin_or_interface == SkinOrInterface::SKIN)
+    else if (skin_or_interface == (int)SkinOrInterface::SKIN)
     {
         bottom_extruder_nr = extruder_nr;
         infill_outline = support_layer.lower_skin_areas[extruder_nr];
