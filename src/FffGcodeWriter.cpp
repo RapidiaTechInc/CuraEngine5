@@ -2779,25 +2779,28 @@ bool FffGcodeWriter::addSupportToGCode(const SliceDataStorage& storage, LayerPla
         return support_added;
     }
 
+    const SkinOrInterface SKIN = SkinOrInterface::SKIN;
+    const SkinOrInterface INTERFACE = SkinOrInterface::INTERFACE;
+
     support_added |= processSupportInfill(storage, gcode_layer, extruder_nr);
 
     if (support_layer.extruder_used_for_upper_skin(extruder_nr))
     {
-        support_added |= addSupportRoofsOrUpperSkinToGCode(storage, gcode_layer, SkinOrInterface::SKIN, extruder_nr);
+        support_added |= addSupportRoofsOrUpperSkinToGCode(storage, gcode_layer, SKIN, extruder_nr);
     }
 
     if (support_layer.extruder_used_for_lower_skin(extruder_nr))
     {
-        support_added |= addSupportBottomsOrLowerSkinToGCode(storage, gcode_layer, SkinOrInterface::SKIN, extruder_nr);
+        support_added |= addSupportBottomsOrLowerSkinToGCode(storage, gcode_layer, SKIN, extruder_nr);
     }
 
     if (extruder_nr == support_roof_extruder_nr)
     {
-        support_added |= addSupportRoofsOrUpperSkinToGCode(storage, gcode_layer, SkinOrInterface::INTERFACE, extruder_nr);
+        support_added |= addSupportRoofsOrUpperSkinToGCode(storage, gcode_layer, INTERFACE, extruder_nr);
     }
     if (extruder_nr == support_bottom_extruder_nr)
     {
-        support_added |= addSupportBottomsOrLowerSkinToGCode(storage, gcode_layer, SkinOrInterface::INTERFACE, extruder_nr);
+        support_added |= addSupportBottomsOrLowerSkinToGCode(storage, gcode_layer, INTERFACE, extruder_nr);
     }
     return support_added;
 }
