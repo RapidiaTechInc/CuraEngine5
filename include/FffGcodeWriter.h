@@ -25,12 +25,7 @@ class SliceMeshStorage;
 class SliceLayer;
 class SliceLayerPart;
 class TimeKeeper;
-enum class SkinOrInterface
-{
-    SKIN,
-    INTERFACE,
-};
-// class SkinOrInterface;
+
 
 /*!
  * Secondary stage in Fused Filament Fabrication processing: The generated polygons are used in the gcode generation.
@@ -91,6 +86,7 @@ private:
 
     std::string slice_uuid; //!< The UUID of the current slice.
   public:
+    enum SkinOrInterface {SKIN, INTERFACE};
     /*
      * \brief Construct a g-code writer.
      *
