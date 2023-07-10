@@ -1912,7 +1912,17 @@ void AreaSupport::generateSupportRoofAndUpperSkin(SliceDataStorage& storage, con
         // Because roofs were calculated first, if present they were already subtracted from global_support_areas
         // Hence, no skin will be generated where interface is to be placed
         generateSupportInterfaceLayer(global_support_areas_per_layer[layer_idx], model_skin_plus_interface_thickness_higher, roof_line_width, roof_outline_offset, minimum_roof_area, skins);
-        support_layers[layer_idx].upper_skin_areas = AreaSupport::computeExtruderRegions(storage, skins, layer_idx, default_infill_extruder_nr);
+        std::vector<Polygons> skins_by_extruder = AreaSupport::computeExtruderRegions(storage, skins, layer_idx, default_infill_extruder_nr);
+        // Join skin polygons from this mesh with any from previous meshes before updating uper_skin_areas for this layer to include polygons for all meshes
+        for (int skin_extruder_nr = 0; skin_extruder_nr < support_layers[layer_idx].upper_skin_areas.size(); skin_extruder_nr++ )
+        {
+            if (!support_layers[layer_idx].upper_skin_areas[skin_extruder_nr].empty()){
+                skins_by_extruder[skin_extruder_nr].add(support_layers[layer_idx].upper_skin_areas[skin_extruder_nr]);
+            }
+            
+        }
+        support_layers[layer_idx].upper_skin_areas = skins_by_extruder;
+         
     }
 
     // Remove support in between the support roof and the model. Subtracts the roof polygons from the support polygons on the layers above it.
