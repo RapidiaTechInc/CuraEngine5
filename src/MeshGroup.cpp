@@ -1,17 +1,22 @@
-// Copyright (c) 2022 Ultimaker B.V.
+// Copyright (c) 2023 UltiMaker
 // CuraEngine is released under the terms of the AGPLv3 or higher
+
+#include "MeshGroup.h"
 
 #include <limits>
 #include <stdio.h>
 #include <string.h>
 
+#include <fmt/format.h>
+#include <range/v3/view/enumerate.hpp>
+#include <scripta/logger.h>
 #include <spdlog/spdlog.h>
 
-#include "MeshGroup.h"
 #include "settings/types/Ratio.h" //For the shrinkage percentage and scale factor.
 #include "utils/FMatrix4x3.h" //To transform the input meshes for shrinkage compensation and to align in command line mode.
 #include "utils/floatpoint.h" //To accept incoming meshes with floating point vertices.
 #include "utils/gettime.h"
+#include "utils/section_type.h"
 #include "utils/string.h"
 
 namespace cura
@@ -108,7 +113,13 @@ void MeshGroup::finalize()
         }
         mesh.translate(mesh_offset + meshgroup_offset);
     }
-    scaleFromBottom(settings.get<Ratio>("material_shrinkage_percentage_xy"), settings.get<Ratio>("material_shrinkage_percentage_z")); // Compensate for the shrinkage of the material.
+    scaleFromBottom(
+        settings.get<Ratio>("material_shrinkage_percentage_xy"),
+        settings.get<Ratio>("material_shrinkage_percentage_z")); // Compensate for the shrinkage of the material.
+    for (const auto& [idx, mesh] : meshes | ranges::views::enumerate)
+    {
+        scripta::log(fmt::format("mesh_{}", idx), mesh, SectionType::NA);
+    }
 }
 
 void MeshGroup::scaleFromBottom(const Ratio factor_xy, const Ratio factor_z)
@@ -277,7 +288,7 @@ bool loadMeshIntoMeshGroup(MeshGroup* meshgroup, const char* filename, const FMa
         if (loadMeshSTL(&mesh, filename, transformation)) // Load it! If successful...
         {
             meshgroup->meshes.push_back(mesh);
-            spdlog::info("loading '{}' took {:3} seconds", filename, load_timer.restart());
+            spdlog::info("loading '{}' took {:03.3f} seconds", filename, load_timer.restart());
             return true;
         }
     }

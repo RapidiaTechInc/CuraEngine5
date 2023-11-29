@@ -1,6 +1,8 @@
 // Copyright (c) 2023 UltiMaker
 // CuraEngine is released under the terms of the AGPLv3 or higher
 
+#include "sliceDataStorage.h"
+
 #include <spdlog/spdlog.h>
 
 #include "Application.h" //To get settings.
@@ -12,24 +14,22 @@
 #include "infill/SierpinskiFillProvider.h"
 #include "infill/SubDivCube.h" // For the destructor
 #include "raft.h"
-#include "sliceDataStorage.h"
 #include "utils/math.h" //For PI.
 
 
 namespace cura
 {
 
-SupportStorage::SupportStorage() : generated(false), layer_nr_max_filled_layer(-1), cross_fill_provider(nullptr)
+SupportStorage::SupportStorage()
+    : generated(false)
+    , layer_nr_max_filled_layer(-1)
+    , cross_fill_provider(nullptr)
 {
 }
 
 SupportStorage::~SupportStorage()
 {
     supportLayers.clear();
-    if (cross_fill_provider)
-    {
-        delete cross_fill_provider;
-    }
 }
 
 Polygons& SliceLayerPart::getOwnInfillArea()
@@ -102,21 +102,6 @@ SliceMeshStorage::SliceMeshStorage(Mesh* mesh, const size_t slice_layer_count)
     layers.resize(slice_layer_count);
 }
 
-SliceMeshStorage::~SliceMeshStorage()
-{
-    if (base_subdiv_cube)
-    {
-        delete base_subdiv_cube;
-    }
-    if (cross_fill_provider)
-    {
-        delete cross_fill_provider;
-    }
-    if (lightning_generator)
-    {
-        delete lightning_generator;
-    }
-}
 
 bool SliceMeshStorage::getExtruderIsUsed(const size_t extruder_nr) const
 {
@@ -143,7 +128,8 @@ bool SliceMeshStorage::getExtruderIsUsed(const size_t extruder_nr) const
     {
         return true;
     }
-    if ((settings.get<size_t>("wall_line_count") > 1 || settings.get<bool>("alternate_extra_perimeter")) && settings.get<ExtruderTrain&>("wall_x_extruder_nr").extruder_nr == extruder_nr)
+    if ((settings.get<size_t>("wall_line_count") > 1 || settings.get<bool>("alternate_extra_perimeter"))
+        && settings.get<ExtruderTrain&>("wall_x_extruder_nr").extruder_nr == extruder_nr)
     {
         return true;
     }
@@ -174,7 +160,8 @@ bool SliceMeshStorage::getExtruderIsUsed(const size_t extruder_nr, const LayerIn
         return false;
     }
     const SliceLayer& layer = layers[layer_nr];
-    if (settings.get<ExtruderTrain&>("wall_0_extruder_nr").extruder_nr == extruder_nr && (settings.get<size_t>("wall_line_count") > 0 || settings.get<size_t>("skin_outline_count") > 0))
+    if (settings.get<ExtruderTrain&>("wall_0_extruder_nr").extruder_nr == extruder_nr
+        && (settings.get<size_t>("wall_line_count") > 0 || settings.get<size_t>("skin_outline_count") > 0))
     {
         for (const SliceLayerPart& part : layer.parts)
         {
@@ -184,11 +171,13 @@ bool SliceMeshStorage::getExtruderIsUsed(const size_t extruder_nr, const LayerIn
             }
         }
     }
-    if (settings.get<ESurfaceMode>("magic_mesh_surface_mode") != ESurfaceMode::NORMAL && settings.get<ExtruderTrain&>("wall_0_extruder_nr").extruder_nr == extruder_nr && layer.openPolyLines.size() > 0)
+    if (settings.get<ESurfaceMode>("magic_mesh_surface_mode") != ESurfaceMode::NORMAL && settings.get<ExtruderTrain&>("wall_0_extruder_nr").extruder_nr == extruder_nr
+        && layer.openPolyLines.size() > 0)
     {
         return true;
     }
-    if ((settings.get<size_t>("wall_line_count") > 1 || settings.get<bool>("alternate_extra_perimeter")) && settings.get<ExtruderTrain&>("wall_x_extruder_nr").extruder_nr == extruder_nr)
+    if ((settings.get<size_t>("wall_line_count") > 1 || settings.get<bool>("alternate_extra_perimeter"))
+        && settings.get<ExtruderTrain&>("wall_x_extruder_nr").extruder_nr == extruder_nr)
     {
         for (const SliceLayerPart& part : layer.parts)
         {
@@ -260,7 +249,10 @@ std::vector<RetractionAndWipeConfig> SliceDataStorage::initializeRetractionAndWi
     return ret;
 }
 
-SliceDataStorage::SliceDataStorage() : print_layer_count(0), retraction_wipe_config_per_extruder(initializeRetractionAndWipeConfigs()), max_print_height_second_to_last_extruder(-1)
+SliceDataStorage::SliceDataStorage()
+    : print_layer_count(0)
+    , retraction_wipe_config_per_extruder(initializeRetractionAndWipeConfigs())
+    , max_print_height_second_to_last_extruder(-1)
 {
     const Settings& mesh_group_settings = Application::getInstance().current_slice->scene.current_mesh_group->settings;
     Point3 machine_max(mesh_group_settings.get<coord_t>("machine_width"), mesh_group_settings.get<coord_t>("machine_depth"), mesh_group_settings.get<coord_t>("machine_height"));
@@ -274,7 +266,9 @@ SliceDataStorage::SliceDataStorage() : print_layer_count(0), retraction_wipe_con
     machine_size.include(machine_max);
 }
 
-Polygons SliceDataStorage::getLayerOutlines(const LayerIndex layer_nr, const bool include_support, const bool include_prime_tower, const bool external_polys_only, const int extruder_nr) const
+Polygons
+    SliceDataStorage::getLayerOutlines(const LayerIndex layer_nr, const bool include_support, const bool include_prime_tower, const bool external_polys_only, const int extruder_nr)
+        const
 {
     const Settings& mesh_group_settings = Application::getInstance().current_slice->scene.current_mesh_group->settings;
     if (layer_nr < 0 && layer_nr < -static_cast<LayerIndex>(Raft::getFillerLayerCount()))
@@ -306,16 +300,16 @@ Polygons SliceDataStorage::getLayerOutlines(const LayerIndex layer_nr, const boo
         Polygons total;
         if (layer_nr >= 0)
         {
-            for (const SliceMeshStorage& mesh : meshes)
+            for (const std::shared_ptr<SliceMeshStorage>& mesh : meshes)
             {
-                if (mesh.settings.get<bool>("infill_mesh") || mesh.settings.get<bool>("anti_overhang_mesh") || mesh.settings.get<bool>("support_modifier_mesh")
-                    || (extruder_nr != -1 && extruder_nr != int(mesh.settings.get<ExtruderTrain&>("wall_0_extruder_nr").extruder_nr)))
+                if (mesh->settings.get<bool>("infill_mesh") || mesh->settings.get<bool>("anti_overhang_mesh") || mesh->settings.get<bool>("support_modifier_mesh")
+                    || (extruder_nr != -1 && extruder_nr != int(mesh->settings.get<ExtruderTrain&>("wall_0_extruder_nr").extruder_nr)))
                 {
                     continue;
                 }
-                const SliceLayer& layer = mesh.layers[layer_nr];
+                const SliceLayer& layer = mesh->layers[layer_nr];
                 layer.getOutlines(total, external_polys_only);
-                if (mesh.settings.get<ESurfaceMode>("magic_mesh_surface_mode") != ESurfaceMode::NORMAL)
+                if (mesh->settings.get<ESurfaceMode>("magic_mesh_surface_mode") != ESurfaceMode::NORMAL)
                 {
                     total = total.unionPolygons(layer.openPolyLines.offsetPolyLine(MM2INT(0.1)));
                 }
@@ -339,7 +333,7 @@ Polygons SliceDataStorage::getLayerOutlines(const LayerIndex layer_nr, const boo
         {
             if (primeTower.enabled)
             {
-                total.add(primeTower.outer_poly);
+                total.add(primeTower.getOuterPoly(layer_nr));
             }
         }
         return total;
@@ -387,9 +381,9 @@ std::vector<bool> SliceDataStorage::getExtrudersUsed() const
 
     // support
     // support is presupposed to be present...
-    for (const SliceMeshStorage& mesh : meshes)
+    for (const std::shared_ptr<SliceMeshStorage>& mesh : meshes)
     {
-        if (mesh.settings.get<bool>("support_enable") || mesh.settings.get<bool>("support_mesh"))
+        if (mesh->settings.get<bool>("support_enable") || mesh->settings.get<bool>("support_mesh"))
         {
             ret[mesh_group_settings.get<ExtruderTrain&>("support_extruder_nr_layer_0").extruder_nr] = true;
             ret[mesh_group_settings.get<ExtruderTrain&>("support_infill_extruder_nr").extruder_nr] = true;
@@ -414,11 +408,11 @@ std::vector<bool> SliceDataStorage::getExtrudersUsed() const
     }
 
     // all meshes are presupposed to actually have content
-    for (const SliceMeshStorage& mesh : meshes)
+    for (const std::shared_ptr<SliceMeshStorage>& mesh : meshes)
     {
         for (unsigned int extruder_nr = 0; extruder_nr < ret.size(); extruder_nr++)
         {
-            ret[extruder_nr] = ret[extruder_nr] || mesh.getExtruderIsUsed(extruder_nr);
+            ret[extruder_nr] = ret[extruder_nr] || mesh->getExtruderIsUsed(extruder_nr);
         }
     }
     return ret;
@@ -494,7 +488,8 @@ std::vector<bool> SliceDataStorage::getExtrudersUsed(const LayerIndex layer_nr) 
         // support
         if (layer_nr < int(support.supportLayers.size()))
         {
-            const SupportLayer& support_layer = support.supportLayers[std::max(LayerIndex(0), layer_nr)];
+            const SupportLayer& support_layer
+                = support.supportLayers[std::max(LayerIndex(0), layer_nr)]; // Below layer 0, it's the same as layer 0 (even though it's not stored here).
             if (layer_nr == 0)
             {
                 if (! support_layer.support_infill_parts.empty())
@@ -533,11 +528,11 @@ std::vector<bool> SliceDataStorage::getExtrudersUsed(const LayerIndex layer_nr) 
 
     if (include_models)
     {
-        for (const SliceMeshStorage& mesh : meshes)
+        for (const std::shared_ptr<SliceMeshStorage>& mesh : meshes)
         {
             for (unsigned int extruder_nr = 0; extruder_nr < ret.size(); extruder_nr++)
             {
-                ret[extruder_nr] = ret[extruder_nr] || mesh.getExtruderIsUsed(extruder_nr, layer_nr);
+                ret[extruder_nr] = ret[extruder_nr] || mesh->getExtruderIsUsed(extruder_nr, layer_nr);
             }
         }
     }
@@ -585,9 +580,19 @@ Polygons SliceDataStorage::getMachineBorder(int checking_extruder_nr) const
 
     Polygons disallowed_areas = mesh_group_settings.get<Polygons>("machine_disallowed_areas");
     disallowed_areas = disallowed_areas.unionPolygons(); // union overlapping disallowed areas
-    for (PolygonRef poly : disallowed_areas)
-        for (Point& p : poly)
-            p = Point(machine_size.max.x / 2 + p.X, machine_size.max.y / 2 - p.Y); // apparently the frontend stores the disallowed areas in a different coordinate system
+
+    // The disallowed areas are expressed in buildplate-centered coordinates, but the models
+    // may be expressed in front-left-centered coordinantes, so in this case we need to translate them
+    if (! mesh_group_settings.get<bool>("machine_center_is_zero"))
+    {
+        for (PolygonRef poly : disallowed_areas)
+        {
+            for (Point& p : poly)
+            {
+                p = Point(machine_size.max.x / 2 + p.X, machine_size.max.y / 2 - p.Y);
+            }
+        }
+    }
 
     std::vector<bool> extruder_is_used = getExtrudersUsed();
 
@@ -728,6 +733,30 @@ void SupportLayer::excludeAreasFromSupportInfillAreas(const Polygons& exclude_po
             support_infill_parts[remove_idx] = std::move(support_infill_parts.back());
         }
         support_infill_parts.pop_back(); // always erase last place in the vector
+    }
+}
+
+void SupportLayer::fillInfillParts(
+    const LayerIndex layer_nr,
+    const std::vector<Polygons>& support_fill_per_layer,
+    const coord_t support_line_width,
+    const coord_t wall_line_count,
+    const coord_t grow_layer_above /*has default 0*/,
+    const bool unionAll /*has default false*/,
+    const coord_t custom_line_distance /*has default 0*/)
+{
+    const Polygons& support_this_layer = support_fill_per_layer[layer_nr];
+    const Polygons& support_layer_above
+        = (layer_nr + 1) >= support_fill_per_layer.size() || layer_nr <= 0 ? Polygons() : support_fill_per_layer[layer_nr + 1].offset(grow_layer_above);
+    const auto all_support_areas_in_layer = { support_this_layer.difference(support_layer_above), support_this_layer.intersection(support_layer_above) };
+    bool use_fractional_config = true;
+    for (auto& support_areas : all_support_areas_in_layer)
+    {
+        for (const PolygonsPart& island_outline : support_areas.splitIntoParts(unionAll))
+        {
+            support_infill_parts.emplace_back(island_outline, support_line_width, use_fractional_config, wall_line_count, custom_line_distance);
+        }
+        use_fractional_config = false;
     }
 }
 

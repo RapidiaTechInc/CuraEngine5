@@ -58,6 +58,7 @@ public:
         settings.add("meshfix_maximum_deviation", "0.1");
         settings.add("meshfix_maximum_extrusion_area_deviation", "0.01");
         settings.add("meshfix_maximum_resolution", "0.01");
+        settings.add("meshfix_fluid_motion_enabled", "false");
         settings.add("min_wall_line_width", "0.3");
         settings.add("min_bead_width", "0");
         settings.add("min_feature_size", "0");
@@ -91,7 +92,7 @@ BENCHMARK_DEFINE_F(WallTestFixture, generateWalls)(benchmark::State& st)
 {
     for (auto _ : st)
     {
-        walls_computation.generateWalls(&layer);
+        walls_computation.generateWalls(&layer, SectionType::WALL);
     }
 }
 
@@ -99,7 +100,7 @@ BENCHMARK_REGISTER_F(WallTestFixture, generateWalls)->Arg(3)->Arg(15)->Arg(9999)
 
 BENCHMARK_DEFINE_F(WallTestFixture, InsetOrderOptimizer_getRegionOrder)(benchmark::State& st)
 {
-    walls_computation.generateWalls(&layer);
+    walls_computation.generateWalls(&layer, SectionType::WALL);
     std::vector<ExtrusionLine> all_paths;
     for (auto& line : layer.parts.back().wall_toolpaths | ranges::views::join )
     {
@@ -115,7 +116,7 @@ BENCHMARK_REGISTER_F(WallTestFixture, InsetOrderOptimizer_getRegionOrder)->Arg(3
 
 BENCHMARK_DEFINE_F(WallTestFixture, InsetOrderOptimizer_getInsetOrder)(benchmark::State& st)
 {
-    walls_computation.generateWalls(&layer);
+    walls_computation.generateWalls(&layer, SectionType::WALL);
     std::vector<ExtrusionLine> all_paths;
     for (auto& line : layer.parts.back().wall_toolpaths | ranges::views::join )
     {

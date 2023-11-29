@@ -3,13 +3,14 @@
 
 #include "multiVolumes.h"
 
-#include <algorithm>
-
 #include "Application.h"
 #include "Slice.h"
 #include "settings/EnumSettings.h"
+#include "settings/types/LayerIndex.h"
 #include "slicer.h"
 #include "utils/PolylineStitcher.h"
+
+#include <algorithm>
 
 namespace cura
 {
@@ -19,7 +20,13 @@ void carveMultipleVolumes(std::vector<Slicer*>& volumes)
     // Go trough all the volumes, and remove the previous volume outlines from our own outline, so we never have overlapped areas.
     const bool alternate_carve_order = Application::getInstance().current_slice->scene.current_mesh_group->settings.get<bool>("alternate_carve_order");
     std::vector<Slicer*> ranked_volumes = volumes;
-    std::sort(ranked_volumes.begin(), ranked_volumes.end(), [](Slicer* volume_1, Slicer* volume_2) { return volume_1->mesh->settings.get<int>("infill_mesh_order") < volume_2->mesh->settings.get<int>("infill_mesh_order"); });
+    std::sort(
+        ranked_volumes.begin(),
+        ranked_volumes.end(),
+        [](Slicer* volume_1, Slicer* volume_2)
+        {
+            return volume_1->mesh->settings.get<int>("infill_mesh_order") < volume_2->mesh->settings.get<int>("infill_mesh_order");
+        });
     for (unsigned int volume_1_idx = 1; volume_1_idx < volumes.size(); volume_1_idx++)
     {
         Slicer& volume_1 = *ranked_volumes[volume_1_idx];
@@ -40,7 +47,7 @@ void carveMultipleVolumes(std::vector<Slicer*>& volumes)
             {
                 continue;
             }
-            for (unsigned int layerNr = 0; layerNr < volume_1.layers.size(); layerNr++)
+            for (LayerIndex layerNr = 0; layerNr < volume_1.layers.size(); layerNr++)
             {
                 SlicerLayer& layer1 = volume_1.layers[layerNr];
                 SlicerLayer& layer2 = volume_2.layers[layerNr];
@@ -79,7 +86,7 @@ void generateMultipleVolumesOverlap(std::vector<Slicer*>& volumes)
         }
         AABB3D aabb(volume->mesh->getAABB());
         aabb.expandXY(overlap); // expand to account for the case where two models and their bounding boxes are adjacent along the X or Y-direction
-        for (unsigned int layer_nr = 0; layer_nr < volume->layers.size(); layer_nr++)
+        for (LayerIndex layer_nr = 0; layer_nr < volume->layers.size(); layer_nr++)
         {
             Polygons all_other_volumes;
             for (Slicer* other_volume : volumes)
@@ -109,7 +116,7 @@ void MultiVolumes::carveCuttingMeshes(std::vector<Slicer*>& volumes, const std::
             continue;
         }
         Slicer& cutting_mesh_volume = *volumes[carving_mesh_idx];
-        for (unsigned int layer_nr = 0; layer_nr < cutting_mesh_volume.layers.size(); layer_nr++)
+        for (LayerIndex layer_nr = 0; layer_nr < cutting_mesh_volume.layers.size(); layer_nr++)
         {
             Polygons& cutting_mesh_polygons = cutting_mesh_volume.layers[layer_nr].polygons;
             Polygons& cutting_mesh_polylines = cutting_mesh_volume.layers[layer_nr].openPolylines;

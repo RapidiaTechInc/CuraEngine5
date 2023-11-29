@@ -1,13 +1,12 @@
-// Copyright (c) 2022 Ultimaker B.V.
+// Copyright (c) 2023 UltiMaker
 // CuraEngine is released under the terms of the AGPLv3 or higher
+
+#include "Scene.h"
 
 #include <spdlog/spdlog.h>
 
 #include "Application.h"
 #include "FffProcessor.h" //To start a slice.
-#include "Scene.h"
-#include "Weaver.h"
-#include "Wireframe2gcode.h"
 #include "communication/Communication.h" //To flush g-code and layer view when we're done.
 #include "progress/Progress.h"
 #include "sliceDataStorage.h"
@@ -15,7 +14,9 @@
 namespace cura
 {
 
-Scene::Scene(const size_t num_mesh_groups) : mesh_groups(num_mesh_groups), current_mesh_group(mesh_groups.begin())
+Scene::Scene(const size_t num_mesh_groups)
+    : mesh_groups(num_mesh_groups)
+    , current_mesh_group(mesh_groups.begin())
 {
     for (MeshGroup& mesh_group : mesh_groups)
     {
@@ -80,39 +81,23 @@ void Scene::processMeshGroup(MeshGroup& mesh_group)
     if (empty)
     {
         Progress::messageProgress(Progress::Stage::FINISH, 1, 1); // 100% on this meshgroup
-        spdlog::info("Total time elapsed {:3}s.", time_keeper_total.restart());
+        spdlog::info("Total time elapsed {:03.3f}s", time_keeper_total.restart());
         return;
     }
 
-    if (mesh_group.settings.get<bool>("wireframe_enabled"))
+    SliceDataStorage storage;
+    if (! fff_processor->polygon_generator.generateAreas(storage, &mesh_group, fff_processor->time_keeper))
     {
-        spdlog::info("Starting Neith Weaver...");
-
-        Weaver weaver;
-        weaver.weave(&mesh_group);
-
-        spdlog::info("Starting Neith Gcode generation...");
-        Wireframe2gcode gcoder(weaver, fff_processor->gcode_writer.gcode);
-        gcoder.writeGCode();
-        spdlog::info("Finished Neith Gcode generation...");
+        return;
     }
-    else // Normal operation (not wireframe).
-    {
-        SliceDataStorage storage;
 
-        if (! fff_processor->polygon_generator.generateAreas(storage, &mesh_group, fff_processor->time_keeper))
-        {
-            return;
-        }
-
-        Progress::messageProgressStage(Progress::Stage::EXPORT, &fff_processor->time_keeper);
-        fff_processor->gcode_writer.writeGCode(storage, fff_processor->time_keeper);
-    }
+    Progress::messageProgressStage(Progress::Stage::EXPORT, &fff_processor->time_keeper);
+    fff_processor->gcode_writer.writeGCode(storage, fff_processor->time_keeper);
 
     Progress::messageProgress(Progress::Stage::FINISH, 1, 1); // 100% on this meshgroup
     Application::getInstance().communication->flushGCode();
     Application::getInstance().communication->sendOptimizedLayerData();
-    spdlog::info("Total time elapsed {:3}s.\n", time_keeper_total.restart());
+    spdlog::info("Total time elapsed {:03.3f}s\n", time_keeper_total.restart());
 }
 
 } // namespace cura
