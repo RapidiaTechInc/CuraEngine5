@@ -3465,10 +3465,11 @@ bool FffGcodeWriter::addSupportRoofsOrUpperSkinToGCode(
 
     size_t roof_extruder_nr;
     Polygons infill_outline;
+
     if (skin_or_interface == 1)
     {
         roof_extruder_nr = Application::getInstance().current_slice->scene.current_mesh_group->settings.get<ExtruderTrain&>("support_roof_extruder_nr").extruder_nr;
-        infill_outline = support_layer.support_roof;
+        infill_outline = support_roof_outlines;
     }
     else if (skin_or_interface == 0)
     {
@@ -3521,7 +3522,6 @@ bool FffGcodeWriter::addSupportRoofsOrUpperSkinToGCode(
         support_roof_line_distance *= roof_extruder.settings.get<Ratio>("initial_layer_line_width_factor");
     }
 
-    Polygons infill_outline = support_roof_outlines;
     Polygons wall;
     // make sure there is a wall if this is on the first layer
     if (gcode_layer.getLayerNr() == 0)
