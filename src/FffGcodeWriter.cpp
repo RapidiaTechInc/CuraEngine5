@@ -1298,9 +1298,8 @@ void FffGcodeWriter::processSkirtBrim(const SliceDataStorage& storage, LayerPlan
     const Ratio flow_ratio = 1.0;
     const double fan_speed = GCodePathConfig::FAN_SPEED_DEFAULT;
     const bool reverse_print_direction = false;
-    
-    gcode_layer.addLinesByOptimizer
-    (
+
+    gcode_layer.addLinesByOptimizer(
         all_brim_lines,
         gcode_layer.configs_storage.skirt_brim_config_per_extruder[extruder_nr],
         SpaceFillType::PolyLines,
@@ -1310,8 +1309,7 @@ void FffGcodeWriter::processSkirtBrim(const SliceDataStorage& storage, LayerPlan
         start_close_to,
         fan_speed,
         reverse_print_direction,
-        order_requirements
-    );
+        order_requirements);
 }
 
 void FffGcodeWriter::processOozeShield(const SliceDataStorage& storage, LayerPlan& gcode_layer) const
@@ -3109,8 +3107,8 @@ bool FffGcodeWriter::addSupportToGCode(const SliceDataStorage& storage, LayerPla
     const size_t support_bottom_extruder_nr = mesh_group_settings.get<ExtruderTrain&>("support_bottom_extruder_nr").extruder_nr;
 
     const SupportLayer& support_layer = storage.support.supportLayers[std::max(LayerIndex{ 0 }, gcode_layer.getLayerNr())];
-    if (support_layer.support_bottom.empty() && support_layer.support_roof.empty() && support_layer.support_infill_parts.empty() && ! support_layer.extruder_used_for_upper_skin(extruder_nr)
-        && ! support_layer.extruder_used_for_lower_skin(extruder_nr))
+    if (support_layer.support_bottom.empty() && support_layer.support_roof.empty() && support_layer.support_infill_parts.empty()
+        && ! support_layer.extruder_used_for_upper_skin(extruder_nr) && ! support_layer.extruder_used_for_lower_skin(extruder_nr))
     {
         return support_added;
     }
@@ -3122,7 +3120,13 @@ bool FffGcodeWriter::addSupportToGCode(const SliceDataStorage& storage, LayerPla
 
     if (support_layer.extruder_used_for_upper_skin(extruder_nr))
     {
-        support_added |= addSupportRoofsOrUpperSkinToGCode(storage, support_layer.support_fractional_roof, gcode_layer.configs_storage.support_fractional_roof_config, gcode_layer, SKIN, extruder_nr);
+        support_added |= addSupportRoofsOrUpperSkinToGCode(
+            storage,
+            support_layer.support_fractional_roof,
+            gcode_layer.configs_storage.support_fractional_roof_config,
+            gcode_layer,
+            SKIN,
+            extruder_nr);
     }
 
     if (support_layer.extruder_used_for_lower_skin(extruder_nr))
@@ -3136,7 +3140,9 @@ bool FffGcodeWriter::addSupportToGCode(const SliceDataStorage& storage, LayerPla
             storage,
             support_layer.support_roof.difference(support_layer.support_fractional_roof),
             gcode_layer.configs_storage.support_roof_config,
-            gcode_layer, INTERFACE, extruder_nr);
+            gcode_layer,
+            INTERFACE,
+            extruder_nr);
     }
     if (extruder_nr == support_bottom_extruder_nr)
     {
@@ -3459,7 +3465,9 @@ bool FffGcodeWriter::addSupportRoofsOrUpperSkinToGCode(
     const SliceDataStorage& storage,
     const Polygons& support_roof_outlines,
     const GCodePathConfig& current_roof_config,
-    LayerPlan& gcode_layer, int skin_or_interface, size_t extruder_nr) const
+    LayerPlan& gcode_layer,
+    int skin_or_interface,
+    size_t extruder_nr) const
 {
     const SupportLayer& support_layer = storage.support.supportLayers[std::max(LayerIndex{ 0 }, gcode_layer.getLayerNr())];
 

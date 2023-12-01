@@ -37,7 +37,13 @@ public:
     bool use_fractional_config; //!< Request to use the configuration used to fill a partial layer height here, instead of the normal full layer height configuration.
 
     size_t extruder_nr; // which extruder is used for this infill part
-    SupportInfillPart(const PolygonsPart& outline, coord_t support_line_width, bool use_fractional_config, size_t extruder_nr, int inset_count_to_generate = 0, coord_t custom_line_distance = 0);
+    SupportInfillPart(
+        const PolygonsPart& outline,
+        coord_t support_line_width,
+        bool use_fractional_config,
+        size_t extruder_nr,
+        int inset_count_to_generate = 0,
+        coord_t custom_line_distance = 0);
 
     const Polygons& getInfillArea() const;
 };

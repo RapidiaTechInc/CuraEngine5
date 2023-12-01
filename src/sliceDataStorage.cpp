@@ -228,7 +228,8 @@ bool SliceMeshStorage::getExtruderIsUsed(const size_t extruder_nr, const LayerIn
 
 bool SliceMeshStorage::isPrinted() const
 {
-    return ! settings.get<bool>("infill_mesh") && ! settings.get<bool>("cutting_mesh") && ! settings.get<bool>("anti_overhang_mesh") && ! settings.get<bool>("support_modifier_mesh");
+    return ! settings.get<bool>("infill_mesh") && ! settings.get<bool>("cutting_mesh") && ! settings.get<bool>("anti_overhang_mesh")
+        && ! settings.get<bool>("support_modifier_mesh");
 }
 
 Point SliceMeshStorage::getZSeamHint() const

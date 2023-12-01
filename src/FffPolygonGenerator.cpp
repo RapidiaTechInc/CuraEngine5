@@ -232,7 +232,8 @@ bool FffPolygonGenerator::sliceModel(MeshGroup* meshgroup, TimeKeeper& timeKeepe
     for (unsigned int mesh_idx = 0; mesh_idx < slicerList.size(); mesh_idx++)
     {
         Mesh& mesh = scene.current_mesh_group->meshes[mesh_idx];
-        if (mesh.settings.get<bool>("conical_overhang_enabled") && ! (mesh.settings.get<bool>("anti_overhang_mesh") || (mesh.settings.get<bool>("support_modifier_mesh") && ! mesh.settings.get<bool>("support_enable"))))
+        if (mesh.settings.get<bool>("conical_overhang_enabled")
+            && ! (mesh.settings.get<bool>("anti_overhang_mesh") || (mesh.settings.get<bool>("support_modifier_mesh") && ! mesh.settings.get<bool>("support_enable"))))
         {
             ConicalOverhang::apply(slicerList[mesh_idx], mesh);
         }
@@ -260,7 +261,8 @@ bool FffPolygonGenerator::sliceModel(MeshGroup* meshgroup, TimeKeeper& timeKeepe
     {
         Mesh& mesh = scene.current_mesh_group->meshes[meshIdx];
         Slicer* slicer = slicerList[meshIdx];
-        if (! mesh.settings.get<bool>("anti_overhang_mesh") && ! mesh.settings.get<bool>("support_modifier_mesh") && ! mesh.settings.get<bool>("infill_mesh") && ! mesh.settings.get<bool>("cutting_mesh"))
+        if (! mesh.settings.get<bool>("anti_overhang_mesh") && ! mesh.settings.get<bool>("support_modifier_mesh") && ! mesh.settings.get<bool>("infill_mesh")
+            && ! mesh.settings.get<bool>("cutting_mesh"))
         {
             storage.print_layer_count = std::max(storage.print_layer_count, slicer->layers.size());
         }

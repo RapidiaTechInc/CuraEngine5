@@ -219,17 +219,20 @@ public:
     Polygons support_mesh; //!< Areas from support meshes which should NOT be supported by more support
     Polygons anti_overhang; //!< Areas where no overhang should be detected.
     std::vector<Polygons> sliced_modifier_meshes_by_extruder; //! Areas defined by support modifier meshes that should be printed with a given extruder.
-    std::vector<Polygons> upper_skin_areas; //! Areas that will be printed with the structure of interface, but with the infill extruder. Indexed by extruder, same as the infill area above
+    std::vector<Polygons>
+        upper_skin_areas; //! Areas that will be printed with the structure of interface, but with the infill extruder. Indexed by extruder, same as the infill area above
     std::vector<Polygons> lower_skin_areas; //! Same as upper_skin_areas, but seperate because interface is dealt with independantly as roofs and bottoms and skin mimics interface
 
     // returns true if any non-default extruder region is non-empty
-    inline bool has_support_extruder_regions(int default_extruder_nr=-1) const
+    inline bool has_support_extruder_regions(int default_extruder_nr = -1) const
     {
         int i = 0;
         for (const Polygons& extruder_region : sliced_modifier_meshes_by_extruder)
         {
-            if (i++ == default_extruder_nr) continue;
-            if (!extruder_region.empty()) return true;
+            if (i++ == default_extruder_nr)
+                continue;
+            if (! extruder_region.empty())
+                return true;
         }
         return false;
     }
@@ -238,7 +241,8 @@ public:
     {
         if (upper_skin_areas.size() > 0 && extruder_nr <= (upper_skin_areas.size() - 1))
         {
-            if (!upper_skin_areas[extruder_nr].empty()){
+            if (! upper_skin_areas[extruder_nr].empty())
+            {
                 return true;
             }
         }
@@ -249,7 +253,8 @@ public:
     {
         if (lower_skin_areas.size() > 0 && extruder_nr <= (lower_skin_areas.size() - 1))
         {
-            if (!lower_skin_areas[extruder_nr].empty()){
+            if (! lower_skin_areas[extruder_nr].empty())
+            {
                 return true;
             }
         }
