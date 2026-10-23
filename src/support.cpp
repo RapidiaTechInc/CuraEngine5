@@ -195,11 +195,14 @@ void AreaSupport::splitGlobalSupportAreasIntoSupportInfillParts(SliceDataStorage
         // tower will remove themselves from the support, so the outlines of the parts can be changed.
         const coord_t layer_height = infill_extruder.settings_.get<coord_t>("layer_height");
         SupportLayer& support_layer = storage.support.supportLayers[layer_nr];
-        if (support_layer.has_support_extruder_regions(default_extruder_nr))
+        // Rapidia: on the first layer the upstream engine uses the dedicated layer-0 support extruder,
+        // unless a support modifier mesh assigns regions to other extruders.
+        const size_t layer_default_extruder_nr = (layer_nr == 0) ? mesh_group_settings.get<ExtruderTrain&>("support_extruder_nr_layer_0").extruder_nr_ : default_extruder_nr;
+        if (support_layer.has_support_extruder_regions(layer_default_extruder_nr))
         {
             // Rapidia: partition the support areas per support extruder, so that support modifier
             // meshes can assign regions to a specific extruder.
-            const std::vector<Shape> extruder_regions = computeExtruderRegions(storage, global_support_areas, layer_nr, default_extruder_nr);
+            const std::vector<Shape> extruder_regions = computeExtruderRegions(storage, global_support_areas, layer_nr, layer_default_extruder_nr);
             for (size_t extruder_nr = 0; extruder_nr < extruder_regions.size(); ++extruder_nr)
             {
                 if (extruder_regions[extruder_nr].empty())
@@ -212,7 +215,7 @@ void AreaSupport::splitGlobalSupportAreasIntoSupportInfillParts(SliceDataStorage
         }
         else
         {
-            support_layer.fillInfillParts(layer_nr, global_support_areas, layer_height, storage.meshes, support_line_width_here, wall_thickness_this_layer, 0, false, 0, default_extruder_nr);
+            support_layer.fillInfillParts(layer_nr, global_support_areas, layer_height, storage.meshes, support_line_width_here, wall_thickness_this_layer, 0, false, 0, layer_default_extruder_nr);
         }
     }
 }

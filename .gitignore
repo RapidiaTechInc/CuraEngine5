@@ -75,3 +75,5 @@ conanbuildinfo.txt
 conaninfo.txt
 graph_info.json
 build/*
+test_package/conan*.sh
+test_package/deactivate_*.sh
