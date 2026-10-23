@@ -210,17 +210,37 @@ void AreaSupport::splitGlobalSupportAreasIntoSupportInfillParts(SliceDataStorage
                     continue;
                 }
                 support_layer.fillInfillParts(
-                    layer_nr, extruder_regions[extruder_nr], layer_height, storage.meshes, support_line_width_here, wall_thickness_this_layer, 0, false, 0, extruder_nr);
+                    layer_nr,
+                    extruder_regions[extruder_nr],
+                    layer_height,
+                    storage.meshes,
+                    support_line_width_here,
+                    wall_thickness_this_layer,
+                    0,
+                    false,
+                    0,
+                    extruder_nr);
             }
         }
         else
         {
-            support_layer.fillInfillParts(layer_nr, global_support_areas, layer_height, storage.meshes, support_line_width_here, wall_thickness_this_layer, 0, false, 0, layer_default_extruder_nr);
+            support_layer.fillInfillParts(
+                layer_nr,
+                global_support_areas,
+                layer_height,
+                storage.meshes,
+                support_line_width_here,
+                wall_thickness_this_layer,
+                0,
+                false,
+                0,
+                layer_default_extruder_nr);
         }
     }
 }
 
-std::vector<Shape> AreaSupport::computeExtruderRegions(const SliceDataStorage& storage, const Shape& global_support_areas, const unsigned int layer_nr, const size_t default_extruder_nr)
+std::vector<Shape>
+    AreaSupport::computeExtruderRegions(const SliceDataStorage& storage, const Shape& global_support_areas, const unsigned int layer_nr, const size_t default_extruder_nr)
 {
     // Partition into regions where an extruder number has been specified.
     // The region for the default extruder is all of the remaining support.
@@ -2049,7 +2069,13 @@ void AreaSupport::generateSupportLowerSkin(SliceDataStorage& storage, const Slic
             model_skin_plus_interface_layers_lower.push_back(mesh.layers[layer_idx_below].getOutlines());
         }
         Shape lower_skins;
-        generateSupportInterfaceLayer(global_support_areas_per_layer[layer_idx], model_skin_plus_interface_layers_lower, bottom_line_width, bottom_outline_offset, minimum_bottom_area, lower_skins);
+        generateSupportInterfaceLayer(
+            global_support_areas_per_layer[layer_idx],
+            model_skin_plus_interface_layers_lower,
+            bottom_line_width,
+            bottom_outline_offset,
+            minimum_bottom_area,
+            lower_skins);
         support_layers[layer_idx].lower_skin_areas = computeExtruderRegions(storage, lower_skins, layer_idx, default_infill_extruder_nr);
     }
 }
@@ -2105,7 +2131,13 @@ void AreaSupport::generateSupportRoof(SliceDataStorage& storage, const SliceMesh
             model_skin_plus_interface_thickness_higher.push_back(mesh.layers[layer_idx_above].getOutlines());
         }
         Shape skins;
-        generateSupportInterfaceLayer(global_support_areas_per_layer[layer_idx], model_skin_plus_interface_thickness_higher, roof_line_width, roof_outline_offset, minimum_roof_area, skins);
+        generateSupportInterfaceLayer(
+            global_support_areas_per_layer[layer_idx],
+            model_skin_plus_interface_thickness_higher,
+            roof_line_width,
+            roof_outline_offset,
+            minimum_roof_area,
+            skins);
         const std::vector<Shape> new_skins_by_extruder = computeExtruderRegions(storage, skins, layer_idx, default_infill_extruder_nr);
         // Join the skin polygons from this mesh with any from previous meshes before updating
         // upper_skin_areas for this layer, so that the areas for all meshes are included.

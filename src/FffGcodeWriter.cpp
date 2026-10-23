@@ -3543,7 +3543,10 @@ bool FffGcodeWriter::addSupportToGCode(const SliceDataStorage& storage, LayerPla
     const bool has_infill_for_extruder = std::any_of(
         support_layer.support_infill_parts.begin(),
         support_layer.support_infill_parts.end(),
-        [extruder_nr](const SupportInfillPart& part) { return part.extruder_nr_ == extruder_nr; });
+        [extruder_nr](const SupportInfillPart& part)
+        {
+            return part.extruder_nr_ == extruder_nr;
+        });
     const bool has_upper_skin = support_layer.extruder_used_for_upper_skin(extruder_nr);
     const bool has_lower_skin = support_layer.extruder_used_for_lower_skin(extruder_nr);
     const bool is_roof_extruder = extruder_nr == support_roof_extruder_nr;
@@ -3567,12 +3570,14 @@ bool FffGcodeWriter::addSupportToGCode(const SliceDataStorage& storage, LayerPla
     }
     if (has_lower_skin)
     {
-        support_added |= addSupportBottomsToGCode(storage, support_layer.lower_skin_areas[extruder_nr], gcode_layer.configs_storage_.support_bottom_config, gcode_layer, extruder_nr);
+        support_added
+            |= addSupportBottomsToGCode(storage, support_layer.lower_skin_areas[extruder_nr], gcode_layer.configs_storage_.support_bottom_config, gcode_layer, extruder_nr);
     }
 
     if (is_roof_extruder)
     {
-        support_added |= addSupportRoofsToGCode(storage, support_layer.support_fractional_roof, gcode_layer.configs_storage_.support_fractional_roof_config, gcode_layer, extruder_nr);
+        support_added
+            |= addSupportRoofsToGCode(storage, support_layer.support_fractional_roof, gcode_layer.configs_storage_.support_fractional_roof_config, gcode_layer, extruder_nr);
         support_added |= addSupportRoofsToGCode(
             storage,
             support_layer.support_roof.difference(support_layer.support_fractional_roof),
@@ -4187,10 +4192,7 @@ bool FffGcodeWriter::addSupportBottomsToGCode(
             storage.getModelBoundingBox().flatten().getMiddle());
         wall_orderer.addToLayer();
     }
-    gcode_layer.addLinesByOptimizer(
-        bottom_lines,
-        current_bottom_config,
-        (pattern == EFillMethod::ZIG_ZAG) ? SpaceFillType::PolyLines : SpaceFillType::Lines);
+    gcode_layer.addLinesByOptimizer(bottom_lines, current_bottom_config, (pattern == EFillMethod::ZIG_ZAG) ? SpaceFillType::PolyLines : SpaceFillType::Lines);
     return true;
 }
 

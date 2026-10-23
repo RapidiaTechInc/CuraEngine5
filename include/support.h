@@ -308,7 +308,8 @@ private:
      * \param default_extruder_nr The extruder that prints the remaining support.
      * \return A vector indexed by extruder number with the support region for each extruder.
      */
-    static std::vector<Shape> computeExtruderRegions(const SliceDataStorage& storage, const Shape& global_support_areas, const unsigned int layer_nr, const size_t default_extruder_nr);
+    static std::vector<Shape>
+        computeExtruderRegions(const SliceDataStorage& storage, const Shape& global_support_areas, const unsigned int layer_nr, const size_t default_extruder_nr);
 
     /*!
      * \brief Adds tower pieces to the current support layer.

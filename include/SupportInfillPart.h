@@ -40,7 +40,13 @@ struct SupportInfillPart
     bool use_fractional_config_; //!< Request to use the configuration used to fill a partial layer height here, instead of the normal full layer height configuration.
     size_t extruder_nr_; //!< Which extruder is used for this support infill part. This is the Rapidia support-modifier extruder.
 
-    SupportInfillPart(const SingleShape& outline, coord_t support_line_width, bool use_fractional_config, coord_t inset_width_to_generate = 0, coord_t custom_line_distance = 0, size_t extruder_nr = 0);
+    SupportInfillPart(
+        const SingleShape& outline,
+        coord_t support_line_width,
+        bool use_fractional_config,
+        coord_t inset_width_to_generate = 0,
+        coord_t custom_line_distance = 0,
+        size_t extruder_nr = 0);
 
     const Shape& getInfillArea() const;
 };

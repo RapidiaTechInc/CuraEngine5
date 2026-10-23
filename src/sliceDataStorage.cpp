@@ -820,8 +820,13 @@ void SupportLayer::excludeAreasFromSupportInfillAreas(const Shape& exclude_polyg
         for (size_t support_island_idx = 1; support_island_idx < smaller_support_islands.size(); ++support_island_idx)
         {
             const SingleShape& smaller_island = smaller_support_islands[support_island_idx];
-            support_infill_parts
-                .emplace_back(smaller_island, support_infill_part.support_line_width_, support_infill_part.use_fractional_config_, support_infill_part.inset_width_to_generate_, support_infill_part.custom_line_distance_, support_infill_part.extruder_nr_);
+            support_infill_parts.emplace_back(
+                smaller_island,
+                support_infill_part.support_line_width_,
+                support_infill_part.use_fractional_config_,
+                support_infill_part.inset_width_to_generate_,
+                support_infill_part.custom_line_distance_,
+                support_infill_part.extruder_nr_);
         }
     }
 
