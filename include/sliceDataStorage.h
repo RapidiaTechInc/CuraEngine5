@@ -223,6 +223,47 @@ public:
     Shape force_overhang; //!< Areas where overhang should be forced.
     MixedLinesSet base; //!< Extra lines to be printed around for sturdiness.
 
+    // ---- Rapidia support modifier / support skin extensions ----
+    std::vector<Shape> sliced_modifier_meshes_by_extruder; //!< Areas defined by support modifier meshes that should be printed with a given extruder.
+    std::vector<Shape> upper_skin_areas; //!< Areas that will be printed with the structure of interface, but with the infill extruder. Indexed by extruder.
+    std::vector<Shape> lower_skin_areas; //!< Same as upper_skin_areas, but for the lower skin (mimics the support bottom).
+
+    //! \brief Returns true if any non-default extruder region is non-empty.
+    inline bool has_support_extruder_regions(int default_extruder_nr = -1) const
+    {
+        int i = 0;
+        for (const Shape& extruder_region : sliced_modifier_meshes_by_extruder)
+        {
+            if (i++ == default_extruder_nr)
+            {
+                continue;
+            }
+            if (! extruder_region.empty())
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    inline bool extruder_used_for_upper_skin(size_t extruder_nr) const
+    {
+        if (! upper_skin_areas.empty() && extruder_nr < upper_skin_areas.size())
+        {
+            return ! upper_skin_areas[extruder_nr].empty();
+        }
+        return false;
+    }
+
+    inline bool extruder_used_for_lower_skin(size_t extruder_nr) const
+    {
+        if (! lower_skin_areas.empty() && extruder_nr < lower_skin_areas.size())
+        {
+            return ! lower_skin_areas[extruder_nr].empty();
+        }
+        return false;
+    }
+
     /*!
      * Exclude the given polygons from the support infill areas and update the SupportInfillParts.
      *
@@ -247,11 +288,12 @@ public:
         const coord_t wall_thickness,
         const bool use_fractional_config = false,
         const bool unionAll = false,
-        const coord_t custom_line_distance = 0)
+        const coord_t custom_line_distance = 0,
+        const size_t extruder_nr = 0)
     {
         for (const SingleShape& island_outline : area.splitIntoParts(unionAll))
         {
-            support_infill_parts.emplace_back(island_outline, support_line_width, use_fractional_config, wall_thickness, custom_line_distance);
+            support_infill_parts.emplace_back(island_outline, support_line_width, use_fractional_config, wall_thickness, custom_line_distance, extruder_nr);
         }
     }
 
@@ -270,14 +312,15 @@ public:
      */
     void fillInfillParts(
         const LayerIndex layer_nr,
-        const std::vector<Shape>& support_fill_per_layer,
+        const Shape& support_fill,
         const coord_t infill_layer_height,
         const std::vector<std::shared_ptr<SliceMeshStorage>>& meshes,
         const coord_t support_line_width,
         const coord_t wall_thickness,
         const coord_t grow_layer_above = 0,
         const bool unionAll = false,
-        const coord_t custom_line_distance = 0);
+        const coord_t custom_line_distance = 0,
+        const size_t extruder_nr = 0);
 };
 
 class SupportStorage

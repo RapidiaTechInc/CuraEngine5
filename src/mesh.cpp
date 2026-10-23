@@ -117,7 +117,7 @@ void Mesh::transform(const Matrix4x3D& transformation)
 
 bool Mesh::isPrinted() const
 {
-    return ! settings_.get<bool>("cutting_mesh") && ! settings_.get<bool>("anti_overhang_mesh")
+    return ! settings_.get<bool>("cutting_mesh") && ! settings_.get<bool>("anti_overhang_mesh") && ! settings_.get<bool>("support_modifier_mesh")
         && (! settings_.has("force_support_overhang_mesh") || ! settings_.get<bool>("force_support_overhang_mesh"));
 }
 

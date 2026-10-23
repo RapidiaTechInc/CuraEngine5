@@ -489,6 +489,22 @@ std::vector<bool> SliceDataStorage::getExtrudersUsed() const
         }
     }
 
+    // Rapidia: generated support may be printed with per-region extruders (support modifier meshes).
+    for (const SupportLayer& support_layer : support.supportLayers)
+    {
+        for (const SupportInfillPart& support_infill_part : support_layer.support_infill_parts)
+        {
+            ret[support_infill_part.extruder_nr_] = true;
+        }
+        for (size_t extruder_nr = 0; extruder_nr < ret.size(); ++extruder_nr)
+        {
+            if (support_layer.extruder_used_for_upper_skin(extruder_nr) || support_layer.extruder_used_for_lower_skin(extruder_nr))
+            {
+                ret[extruder_nr] = true;
+            }
+        }
+    }
+
     // all meshes are presupposed to actually have content
     for (const std::shared_ptr<SliceMeshStorage>& mesh : meshes)
     {
@@ -579,12 +595,9 @@ std::vector<bool> SliceDataStorage::getExtrudersUsed(const LayerIndex layer_nr) 
                     ret[mesh_group_settings.get<ExtruderTrain&>("support_extruder_nr_layer_0").extruder_nr_] = true;
                 }
             }
-            else
+            for (const SupportInfillPart& support_infill_part : support_layer.support_infill_parts)
             {
-                if (! support_layer.support_infill_parts.empty())
-                {
-                    ret[mesh_group_settings.get<ExtruderTrain&>("support_infill_extruder_nr").extruder_nr_] = true;
-                }
+                ret[support_infill_part.extruder_nr_] = true;
             }
             if (! support_layer.support_bottom.empty())
             {
@@ -593,6 +606,13 @@ std::vector<bool> SliceDataStorage::getExtrudersUsed(const LayerIndex layer_nr) 
             if (! support_layer.support_roof.empty())
             {
                 ret[mesh_group_settings.get<ExtruderTrain&>("support_roof_extruder_nr").extruder_nr_] = true;
+            }
+            for (size_t extruder_nr = 0; extruder_nr < ret.size(); ++extruder_nr)
+            {
+                if (support_layer.extruder_used_for_upper_skin(extruder_nr) || support_layer.extruder_used_for_lower_skin(extruder_nr))
+                {
+                    ret[extruder_nr] = true;
+                }
             }
         }
     }
@@ -801,7 +821,7 @@ void SupportLayer::excludeAreasFromSupportInfillAreas(const Shape& exclude_polyg
         {
             const SingleShape& smaller_island = smaller_support_islands[support_island_idx];
             support_infill_parts
-                .emplace_back(smaller_island, support_infill_part.support_line_width_, support_infill_part.use_fractional_config_, support_infill_part.inset_width_to_generate_);
+                .emplace_back(smaller_island, support_infill_part.support_line_width_, support_infill_part.use_fractional_config_, support_infill_part.inset_width_to_generate_, support_infill_part.custom_line_distance_, support_infill_part.extruder_nr_);
         }
     }
 
@@ -824,14 +844,15 @@ void SupportLayer::excludeAreasFromSupportInfillAreas(const Shape& exclude_polyg
 
 void SupportLayer::fillInfillParts(
     const LayerIndex layer_nr,
-    const std::vector<Shape>& support_fill_per_layer,
+    const Shape& support_fill,
     const coord_t infill_layer_height,
     const std::vector<std::shared_ptr<SliceMeshStorage>>& meshes,
     const coord_t support_line_width,
     const coord_t wall_thickness,
     const coord_t grow_layer_above /*has default 0*/,
     const bool unionAll /*has default false*/,
-    const coord_t custom_line_distance /*has default 0*/)
+    const coord_t custom_line_distance /*has default 0*/,
+    const size_t extruder_nr /*has default 0*/)
 {
     // Find the model exactly z-distance above the support layer.
     Shape overhang_z_dist_above;
@@ -847,14 +868,13 @@ void SupportLayer::fillInfillParts(
     overhang_z_dist_above = overhang_z_dist_above.unionPolygons();
 
     // Split the support outline into areas that are directly under the overhang and areas that are not.
-    const auto all_support_areas_in_layer
-        = { support_fill_per_layer[layer_nr].intersection(overhang_z_dist_above), support_fill_per_layer[layer_nr].difference(overhang_z_dist_above) };
+    const auto all_support_areas_in_layer = { support_fill.intersection(overhang_z_dist_above), support_fill.difference(overhang_z_dist_above) };
     bool use_fractional_config = true;
     for (auto& support_areas : all_support_areas_in_layer)
     {
         for (const SingleShape& island_outline : support_areas.splitIntoParts(unionAll))
         {
-            support_infill_parts.emplace_back(island_outline, support_line_width, use_fractional_config, wall_thickness, custom_line_distance);
+            support_infill_parts.emplace_back(island_outline, support_line_width, use_fractional_config, wall_thickness, custom_line_distance, extruder_nr);
         }
         use_fractional_config = false;
     }

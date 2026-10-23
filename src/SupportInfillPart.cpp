@@ -13,12 +13,14 @@ SupportInfillPart::SupportInfillPart(
     coord_t support_line_width,
     bool use_fractional_config,
     coord_t inset_width_to_generate,
-    coord_t custom_line_distance)
+    coord_t custom_line_distance,
+    size_t extruder_nr)
     : outline_(outline)
     , outline_boundary_box_(outline)
     , support_line_width_(support_line_width)
     , inset_width_to_generate_(inset_width_to_generate)
     , custom_line_distance_(custom_line_distance)
     , use_fractional_config_(use_fractional_config)
+    , extruder_nr_(extruder_nr)
 {
 }

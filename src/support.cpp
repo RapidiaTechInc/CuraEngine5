@@ -47,8 +47,41 @@ bool AreaSupport::handleSupportModifierMesh(SliceDataStorage& storage, const Set
 {
     const bool is_anti_overhang_mesh = mesh_settings.get<bool>("anti_overhang_mesh");
     const bool is_support_mesh = mesh_settings.get<bool>("support_mesh");
+    const bool is_support_modifier_mesh = mesh_settings.get<bool>("support_modifier_mesh");
     const bool is_force_support_overhang_mesh = mesh_settings.has("force_support_overhang_mesh") && mesh_settings.get<bool>("force_support_overhang_mesh");
-    if (! is_anti_overhang_mesh && ! is_support_mesh && ! is_force_support_overhang_mesh)
+
+    // Rapidia: handle per-extruder support regions. A mesh whose support extruder differs from the
+    // global default claims the support underneath it for that extruder. Support modifier meshes use
+    // the same mechanism to assign a region to a specific support extruder.
+    const Settings& mesh_group_settings = Application::getInstance().current_slice_->scene.current_mesh_group->settings;
+    const size_t default_support_infill_extruder_nr[2]{
+        mesh_group_settings.get<ExtruderTrain&>("support_extruder_nr_layer_0").extruder_nr_,
+        mesh_group_settings.get<ExtruderTrain&>("support_infill_extruder_nr").extruder_nr_,
+    };
+    const size_t modifier_extruder_nr[2]{
+        mesh_settings.get<ExtruderTrain&>("support_extruder_nr_layer_0").extruder_nr_,
+        mesh_settings.get<ExtruderTrain&>("support_infill_extruder_nr").extruder_nr_,
+    };
+    const size_t layer_start[2]{ 0, 1 };
+    const size_t layer_end[2]{ std::min<size_t>(1, slicer->layers.size()), slicer->layers.size() };
+    for (size_t layer_category = 0; layer_category <= 1; ++layer_category)
+    {
+        if (default_support_infill_extruder_nr[layer_category] != modifier_extruder_nr[layer_category])
+        {
+            for (unsigned int layer_nr = layer_start[layer_category]; layer_nr < layer_end[layer_category]; ++layer_nr)
+            {
+                SupportLayer& support_layer = storage.support.supportLayers[layer_nr];
+                const SlicerLayer& slicer_layer = slicer->layers[layer_nr];
+                while (support_layer.sliced_modifier_meshes_by_extruder.size() <= modifier_extruder_nr[layer_category])
+                {
+                    support_layer.sliced_modifier_meshes_by_extruder.emplace_back();
+                }
+                support_layer.sliced_modifier_meshes_by_extruder[modifier_extruder_nr[layer_category]].push_back(slicer_layer.polygons_);
+            }
+        }
+    }
+
+    if (! is_anti_overhang_mesh && ! is_support_mesh && ! is_support_modifier_mesh && ! is_force_support_overhang_mesh)
     {
         return false;
     }
@@ -58,6 +91,7 @@ bool AreaSupport::handleSupportModifierMesh(SliceDataStorage& storage, const Set
         ANTI_OVERHANG,
         SUPPORT_DROP_DOWN,
         SUPPORT_VANILLA,
+        SUPPORT_MODIFIER,
         FORCE_OVERHANG,
     };
 
@@ -65,6 +99,10 @@ bool AreaSupport::handleSupportModifierMesh(SliceDataStorage& storage, const Set
     if (is_anti_overhang_mesh)
     {
         modifier_type = ModifierType::ANTI_OVERHANG;
+    }
+    else if (is_support_modifier_mesh)
+    {
+        modifier_type = ModifierType::SUPPORT_MODIFIER;
     }
     else if (is_force_support_overhang_mesh)
     {
@@ -94,6 +132,14 @@ bool AreaSupport::handleSupportModifierMesh(SliceDataStorage& storage, const Set
         case ModifierType::SUPPORT_VANILLA:
             support_layer.support_mesh.push_back(slicer_layer.polygons_);
             break;
+        case ModifierType::SUPPORT_MODIFIER:
+            // A support modifier mesh only blocks support when support is disabled on it. When support is
+            // enabled it merely changes the extruder for the support region (handled above).
+            if (! mesh_settings.get<bool>("support_enable"))
+            {
+                support_layer.anti_overhang.push_back(slicer_layer.polygons_);
+            }
+            break;
         case ModifierType::FORCE_OVERHANG:
             support_layer.force_overhang.push_back(slicer_layer.polygons_);
             break;
@@ -116,6 +162,7 @@ void AreaSupport::splitGlobalSupportAreasIntoSupportInfillParts(SliceDataStorage
 
     const Settings& mesh_group_settings = Application::getInstance().current_slice_->scene.current_mesh_group->settings;
     const ExtruderTrain& infill_extruder = mesh_group_settings.get<ExtruderTrain&>("support_infill_extruder_nr");
+    const size_t default_extruder_nr = infill_extruder.extruder_nr_;
     const EFillMethod support_pattern = infill_extruder.settings_.get<EFillMethod>("support_pattern");
     const coord_t support_line_width = infill_extruder.settings_.get<coord_t>("support_line_width");
 
@@ -147,9 +194,65 @@ void AreaSupport::splitGlobalSupportAreasIntoSupportInfillParts(SliceDataStorage
         // We don't generate insets and infill area for the parts yet because later the skirt/brim and prime
         // tower will remove themselves from the support, so the outlines of the parts can be changed.
         const coord_t layer_height = infill_extruder.settings_.get<coord_t>("layer_height");
-        storage.support.supportLayers[layer_nr]
-            .fillInfillParts(layer_nr, global_support_areas_per_layer, layer_height, storage.meshes, support_line_width_here, wall_thickness_this_layer);
+        SupportLayer& support_layer = storage.support.supportLayers[layer_nr];
+        if (support_layer.has_support_extruder_regions(default_extruder_nr))
+        {
+            // Rapidia: partition the support areas per support extruder, so that support modifier
+            // meshes can assign regions to a specific extruder.
+            const std::vector<Shape> extruder_regions = computeExtruderRegions(storage, global_support_areas, layer_nr, default_extruder_nr);
+            for (size_t extruder_nr = 0; extruder_nr < extruder_regions.size(); ++extruder_nr)
+            {
+                if (extruder_regions[extruder_nr].empty())
+                {
+                    continue;
+                }
+                support_layer.fillInfillParts(
+                    layer_nr, extruder_regions[extruder_nr], layer_height, storage.meshes, support_line_width_here, wall_thickness_this_layer, 0, false, 0, extruder_nr);
+            }
+        }
+        else
+        {
+            support_layer.fillInfillParts(layer_nr, global_support_areas, layer_height, storage.meshes, support_line_width_here, wall_thickness_this_layer, 0, false, 0, default_extruder_nr);
+        }
     }
+}
+
+std::vector<Shape> AreaSupport::computeExtruderRegions(const SliceDataStorage& storage, const Shape& global_support_areas, const unsigned int layer_nr, const size_t default_extruder_nr)
+{
+    // Partition into regions where an extruder number has been specified.
+    // The region for the default extruder is all of the remaining support.
+    const SupportLayer& support_layer = storage.support.supportLayers[layer_nr];
+    std::vector<Shape> extruder_regions(std::max(support_layer.sliced_modifier_meshes_by_extruder.size(), default_extruder_nr + 1));
+
+    // The default extruder region is determined differently from the others.
+    extruder_regions[default_extruder_nr] = global_support_areas;
+
+    for (size_t extruder_nr = 0; extruder_nr < support_layer.sliced_modifier_meshes_by_extruder.size(); ++extruder_nr)
+    {
+        if (extruder_nr == default_extruder_nr)
+        {
+            continue; // The default region is set above.
+        }
+
+        Shape extruder_region = support_layer.sliced_modifier_meshes_by_extruder[extruder_nr];
+        if (extruder_region.empty())
+        {
+            continue;
+        }
+
+        // Union the polygons to ensure that the largest possible continuous support islands are generated
+        // and to avoid a bug where the overlap of modifier meshes is interpreted as a hole when performing
+        // a difference.
+        if (extruder_region.size() > 1)
+        {
+            extruder_region = extruder_region.unionPolygons();
+        }
+
+        extruder_regions[extruder_nr] = global_support_areas.intersection(extruder_region);
+        extruder_regions[default_extruder_nr] = extruder_regions[default_extruder_nr].difference(extruder_region);
+    }
+
+    return extruder_regions;
 }
 
 
@@ -808,6 +911,10 @@ void AreaSupport::generateSupportAreas(SliceDataStorage& storage)
         support_layer.force_overhang = support_layer.force_overhang.unionPolygons();
         support_layer.support_mesh_drop_down = support_layer.support_mesh_drop_down.unionPolygons();
         support_layer.support_mesh = support_layer.support_mesh.unionPolygons();
+        for (Shape& modifier_region : support_layer.sliced_modifier_meshes_by_extruder)
+        {
+            modifier_region = modifier_region.unionPolygons();
+        }
     }
 
     // initialization of supportAreasPerLayer
@@ -875,14 +982,17 @@ void AreaSupport::generateSupportAreas(SliceDataStorage& storage)
             continue;
         }
 
-        if (mesh->settings.get<bool>("support_roof_enable"))
-        {
-            generateSupportRoof(storage, *mesh, global_support_areas_per_layer);
-        }
+        // Rapidia: generate the bottom interface before the roof/skin, so that the interface takes
+        // precedence over the support skin. The upper skin is generated together with the roof.
         if (mesh->settings.get<bool>("support_bottom_enable"))
         {
             generateSupportBottom(storage, *mesh, global_support_areas_per_layer);
         }
+        if (mesh->settings.get<bool>("support_roof_enable"))
+        {
+            generateSupportRoof(storage, *mesh, global_support_areas_per_layer);
+        }
+        generateSupportLowerSkin(storage, *mesh, global_support_areas_per_layer);
     }
 
     // split the global support areas into parts for later gradual support infill generation
@@ -1910,6 +2020,37 @@ void AreaSupport::generateSupportBottom(SliceDataStorage& storage, const SliceMe
     }
 }
 
+void AreaSupport::generateSupportLowerSkin(SliceDataStorage& storage, const SliceMeshStorage& mesh, std::vector<Shape>& global_support_areas_per_layer)
+{
+    const Settings& mesh_group_settings = Application::getInstance().current_slice_->scene.current_mesh_group->settings;
+    const coord_t layer_height = mesh_group_settings.get<coord_t>("layer_height");
+    const size_t lower_skin_layer_count = round_divide(mesh.settings.get<coord_t>("support_lower_skin_height"), layer_height); // Number of layers in the lower skin.
+    const size_t bottom_layer_count = round_divide(mesh.settings.get<coord_t>("support_bottom_height"), layer_height); // Number of layers in the support bottom.
+    if (lower_skin_layer_count <= 0)
+    {
+        return;
+    }
+    const size_t default_infill_extruder_nr = mesh_group_settings.get<ExtruderTrain&>("support_infill_extruder_nr").extruder_nr_;
+    const coord_t z_distance_bottom = round_up_divide(mesh.settings.get<coord_t>("support_bottom_distance"), layer_height); // Number of layers between support bottom and model.
+    const coord_t bottom_line_width = mesh_group_settings.get<ExtruderTrain&>("support_bottom_extruder_nr").settings_.get<coord_t>("support_bottom_line_width");
+    const coord_t bottom_outline_offset = mesh_group_settings.get<ExtruderTrain&>("support_bottom_extruder_nr").settings_.get<coord_t>("support_bottom_offset");
+    const double minimum_bottom_area = mesh.settings.get<double>("minimum_bottom_area");
+
+    std::vector<SupportLayer>& support_layers = storage.support.supportLayers;
+    for (LayerIndex layer_idx = support_layers.size() - 1; layer_idx >= static_cast<int>(z_distance_bottom); --layer_idx)
+    {
+        const unsigned int bottom_layer_idx_below = std::max(0, int(layer_idx) - int(bottom_layer_count) - int(z_distance_bottom) - int(lower_skin_layer_count));
+        Shape model_skin_plus_interface_layers_lower;
+        for (auto layer_idx_below = bottom_layer_idx_below; layer_idx_below < layer_idx - z_distance_bottom + 1; layer_idx_below += 1)
+        {
+            model_skin_plus_interface_layers_lower.push_back(mesh.layers[layer_idx_below].getOutlines());
+        }
+        Shape lower_skins;
+        generateSupportInterfaceLayer(global_support_areas_per_layer[layer_idx], model_skin_plus_interface_layers_lower, bottom_line_width, bottom_outline_offset, minimum_bottom_area, lower_skins);
+        support_layers[layer_idx].lower_skin_areas = computeExtruderRegions(storage, lower_skins, layer_idx, default_infill_extruder_nr);
+    }
+}
+
 void AreaSupport::generateSupportRoof(SliceDataStorage& storage, const SliceMeshStorage& mesh, std::vector<Shape>& global_support_areas_per_layer)
 {
     const Settings& mesh_group_settings = Application::getInstance().current_slice_->scene.current_mesh_group->settings;
@@ -1925,6 +2066,8 @@ void AreaSupport::generateSupportRoof(SliceDataStorage& storage, const SliceMesh
     const coord_t roof_outline_offset = mesh_group_settings.get<ExtruderTrain&>("support_roof_extruder_nr").settings_.get<coord_t>("support_roof_offset");
 
     const double minimum_roof_area = mesh.settings.get<double>("minimum_roof_area");
+    const size_t skin_layer_count = round_divide(mesh.settings.get<coord_t>("support_upper_skin_height"), layer_height); // Number of layers for the upper support skin.
+    const size_t default_infill_extruder_nr = mesh_group_settings.get<ExtruderTrain&>("support_infill_extruder_nr").extruder_nr_;
 
     std::vector<SupportLayer>& support_layers = storage.support.supportLayers;
     for (LayerIndex layer_idx = static_cast<int>(support_layers.size() - z_distance_top) - 1; layer_idx >= 0; --layer_idx)
@@ -1945,6 +2088,38 @@ void AreaSupport::generateSupportRoof(SliceDataStorage& storage, const SliceMesh
             support_layers[layer_idx].support_fractional_roof.push_back(roofs.difference(support_layers[layer_idx + 1].support_roof));
         }
         scripta::log("support_interface_roofs", roofs, SectionType::SUPPORT, layer_idx);
+
+        // Rapidia: generate the upper support skin just below the interface. The roof has already been
+        // subtracted from the global support areas, so no skin is generated where the interface is
+        // placed. The skin is printed with the structure of the interface, but with the support infill
+        // extruder of the region it is in.
+        const LayerIndex top_skin_layer_idx_above{
+            std::min(LayerIndex{ support_layers.size() - 1 }, LayerIndex{ layer_idx + skin_layer_count + roof_layer_count + z_distance_top })
+        }; // Maximum layer of the model that generates support skin.
+        Shape model_skin_plus_interface_thickness_higher;
+        for (auto layer_idx_above = top_skin_layer_idx_above; layer_idx_above > layer_idx + z_distance_top - 1; layer_idx_above -= 1)
+        {
+            model_skin_plus_interface_thickness_higher.push_back(mesh.layers[layer_idx_above].getOutlines());
+        }
+        Shape skins;
+        generateSupportInterfaceLayer(global_support_areas_per_layer[layer_idx], model_skin_plus_interface_thickness_higher, roof_line_width, roof_outline_offset, minimum_roof_area, skins);
+        const std::vector<Shape> new_skins_by_extruder = computeExtruderRegions(storage, skins, layer_idx, default_infill_extruder_nr);
+        // Join the skin polygons from this mesh with any from previous meshes before updating
+        // upper_skin_areas for this layer, so that the areas for all meshes are included.
+        const size_t max_extruders = std::max(new_skins_by_extruder.size(), support_layers[layer_idx].upper_skin_areas.size());
+        std::vector<Shape> all_skins_by_extruder(max_extruders);
+        for (size_t skin_extruder_nr = 0; skin_extruder_nr < max_extruders; ++skin_extruder_nr)
+        {
+            if (support_layers[layer_idx].upper_skin_areas.size() > skin_extruder_nr && ! support_layers[layer_idx].upper_skin_areas[skin_extruder_nr].empty())
+            {
+                all_skins_by_extruder[skin_extruder_nr].push_back(support_layers[layer_idx].upper_skin_areas[skin_extruder_nr]);
+            }
+            if (new_skins_by_extruder.size() > skin_extruder_nr && ! new_skins_by_extruder[skin_extruder_nr].empty())
+            {
+                all_skins_by_extruder[skin_extruder_nr].push_back(new_skins_by_extruder[skin_extruder_nr]);
+            }
+        }
+        support_layers[layer_idx].upper_skin_areas = all_skins_by_extruder;
     }
 
     // Remove support in between the support roof and the model. Subtracts the roof polygons from the support polygons on the layers above it.

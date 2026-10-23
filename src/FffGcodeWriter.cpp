@@ -1248,11 +1248,6 @@ FffGcodeWriter::ProcessLayerResult FffGcodeWriter::processLayer(const SliceDataS
         time_keeper.registerTime("Draft shield");
     }
 
-    const size_t support_roof_extruder_nr = mesh_group_settings.get<ExtruderTrain&>("support_roof_extruder_nr").extruder_nr_;
-    const size_t support_bottom_extruder_nr = mesh_group_settings.get<ExtruderTrain&>("support_bottom_extruder_nr").extruder_nr_;
-    const size_t support_infill_extruder_nr = (layer_nr <= 0) ? mesh_group_settings.get<ExtruderTrain&>("support_extruder_nr_layer_0").extruder_nr_
-                                                              : mesh_group_settings.get<ExtruderTrain&>("support_infill_extruder_nr").extruder_nr_;
-
     for (const ExtruderUse& extruder_use : extruder_order)
     {
         const size_t extruder_nr = extruder_use.extruder_nr;
@@ -1261,10 +1256,15 @@ FffGcodeWriter::ProcessLayerResult FffGcodeWriter::processLayer(const SliceDataS
         setExtruder_addPrime(storage, gcode_layer, extruder_nr);
         time_keeper.registerTime("Prime tower");
 
-        if (include_helper_parts && (extruder_nr == support_infill_extruder_nr || extruder_nr == support_roof_extruder_nr || extruder_nr == support_bottom_extruder_nr))
+        // Rapidia: support can be printed with any extruder, not just the default support extruders,
+        // because support modifier meshes may assign regions to other extruders. addSupportToGCode()
+        // decides per extruder whether there is anything to print.
+        if (include_helper_parts)
         {
-            addSupportToGCode(storage, gcode_layer, extruder_nr);
-            time_keeper.registerTime("Supports");
+            if (addSupportToGCode(storage, gcode_layer, extruder_nr))
+            {
+                time_keeper.registerTime("Supports");
+            }
         }
         if (layer_nr >= 0)
         {
@@ -3535,40 +3535,60 @@ bool FffGcodeWriter::addSupportToGCode(const SliceDataStorage& storage, LayerPla
     const Settings& mesh_group_settings = Application::getInstance().current_slice_->scene.current_mesh_group->settings;
     const size_t support_roof_extruder_nr = mesh_group_settings.get<ExtruderTrain&>("support_roof_extruder_nr").extruder_nr_;
     const size_t support_bottom_extruder_nr = mesh_group_settings.get<ExtruderTrain&>("support_bottom_extruder_nr").extruder_nr_;
-    size_t support_infill_extruder_nr = (gcode_layer.getLayerNr() <= 0) ? mesh_group_settings.get<ExtruderTrain&>("support_extruder_nr_layer_0").extruder_nr_
-                                                                        : mesh_group_settings.get<ExtruderTrain&>("support_infill_extruder_nr").extruder_nr_;
 
     const SupportLayer& support_layer = storage.support.supportLayers[std::max(LayerIndex{ 0 }, gcode_layer.getLayerNr())];
-    if (support_layer.support_bottom.empty() && support_layer.support_roof.empty() && support_layer.support_infill_parts.empty())
+
+    // Rapidia: this extruder may have support infill parts and/or upper/lower skin areas of its own,
+    // in addition to the default support interface. Determine what this extruder has to print.
+    const bool has_infill_for_extruder = std::any_of(
+        support_layer.support_infill_parts.begin(),
+        support_layer.support_infill_parts.end(),
+        [extruder_nr](const SupportInfillPart& part) { return part.extruder_nr_ == extruder_nr; });
+    const bool has_upper_skin = support_layer.extruder_used_for_upper_skin(extruder_nr);
+    const bool has_lower_skin = support_layer.extruder_used_for_lower_skin(extruder_nr);
+    const bool is_roof_extruder = extruder_nr == support_roof_extruder_nr;
+    const bool is_bottom_extruder = extruder_nr == support_bottom_extruder_nr;
+
+    if (! has_infill_for_extruder && ! has_upper_skin && ! has_lower_skin && ! is_roof_extruder && ! is_bottom_extruder)
     {
         return support_added;
     }
 
-    if (extruder_nr == support_roof_extruder_nr)
+    if (has_infill_for_extruder)
     {
-        support_added |= addSupportRoofsToGCode(storage, support_layer.support_fractional_roof, gcode_layer.configs_storage_.support_fractional_roof_config, gcode_layer);
+        support_added |= processSupportInfill(storage, gcode_layer, extruder_nr);
     }
-    if (extruder_nr == support_infill_extruder_nr)
+
+    // Rapidia: the upper/lower skin is printed with the structure of the interface, but with the
+    // support infill extruder of the region it is in.
+    if (has_upper_skin)
     {
-        support_added |= processSupportInfill(storage, gcode_layer);
+        support_added |= addSupportRoofsToGCode(storage, support_layer.upper_skin_areas[extruder_nr], gcode_layer.configs_storage_.support_roof_config, gcode_layer, extruder_nr);
     }
-    if (extruder_nr == support_roof_extruder_nr)
+    if (has_lower_skin)
     {
+        support_added |= addSupportBottomsToGCode(storage, support_layer.lower_skin_areas[extruder_nr], gcode_layer.configs_storage_.support_bottom_config, gcode_layer, extruder_nr);
+    }
+
+    if (is_roof_extruder)
+    {
+        support_added |= addSupportRoofsToGCode(storage, support_layer.support_fractional_roof, gcode_layer.configs_storage_.support_fractional_roof_config, gcode_layer, extruder_nr);
         support_added |= addSupportRoofsToGCode(
             storage,
             support_layer.support_roof.difference(support_layer.support_fractional_roof),
             gcode_layer.configs_storage_.support_roof_config,
-            gcode_layer);
+            gcode_layer,
+            extruder_nr);
     }
-    if (extruder_nr == support_bottom_extruder_nr)
+    if (is_bottom_extruder)
     {
-        support_added |= addSupportBottomsToGCode(storage, gcode_layer);
+        support_added |= addSupportBottomsToGCode(storage, support_layer.support_bottom, gcode_layer.configs_storage_.support_bottom_config, gcode_layer, extruder_nr);
     }
     return support_added;
 }
 
 
-bool FffGcodeWriter::processSupportInfill(const SliceDataStorage& storage, LayerPlan& gcode_layer) const
+bool FffGcodeWriter::processSupportInfill(const SliceDataStorage& storage, LayerPlan& gcode_layer, const size_t extruder_nr) const
 {
     bool added_something = false;
     const SupportLayer& support_layer
@@ -3580,8 +3600,6 @@ bool FffGcodeWriter::processSupportInfill(const SliceDataStorage& storage, Layer
     }
 
     const Settings& mesh_group_settings = Application::getInstance().current_slice_->scene.current_mesh_group->settings;
-    const size_t extruder_nr = (gcode_layer.getLayerNr() <= 0) ? mesh_group_settings.get<ExtruderTrain&>("support_extruder_nr_layer_0").extruder_nr_
-                                                               : mesh_group_settings.get<ExtruderTrain&>("support_infill_extruder_nr").extruder_nr_;
     const ExtruderTrain& infill_extruder = Application::getInstance().current_slice_->scene.extruders[extruder_nr];
 
     gcode_layer.addLinesByOptimizer(support_layer.base, gcode_layer.configs_storage_.support_infill_config[0], SpaceFillType::PolyLines);
@@ -3646,6 +3664,11 @@ bool FffGcodeWriter::processSupportInfill(const SliceDataStorage& storage, Layer
     PathOrderOptimizer<const SupportInfillPart*> island_order_optimizer(gcode_layer.getLastPlannedPositionOrStartingPosition());
     for (const SupportInfillPart& part : support_layer.support_infill_parts)
     {
+        // Rapidia: only consider the islands assigned to the current extruder.
+        if (part.extruder_nr_ != extruder_nr)
+        {
+            continue;
+        }
         (part.use_fractional_config_ ? island_order_optimizer_initial : island_order_optimizer).addPolygon(&part);
     }
     island_order_optimizer_initial.optimize();
@@ -3920,17 +3943,19 @@ bool FffGcodeWriter::processSupportInfill(const SliceDataStorage& storage, Layer
 }
 
 
-bool FffGcodeWriter::addSupportRoofsToGCode(const SliceDataStorage& storage, const Shape& support_roof_outlines, const GCodePathConfig& current_roof_config, LayerPlan& gcode_layer)
-    const
+bool FffGcodeWriter::addSupportRoofsToGCode(
+    const SliceDataStorage& storage,
+    const Shape& support_roof_outlines,
+    const GCodePathConfig& current_roof_config,
+    LayerPlan& gcode_layer,
+    const size_t extruder_nr) const
 {
-    const SupportLayer& support_layer = storage.support.supportLayers[std::max(LayerIndex{ 0 }, gcode_layer.getLayerNr())];
-
-    if (! storage.support.generated || gcode_layer.getLayerNr() > storage.support.layer_nr_max_filled_layer || support_layer.support_roof.empty())
+    if (! storage.support.generated || gcode_layer.getLayerNr() > storage.support.layer_nr_max_filled_layer || support_roof_outlines.empty())
     {
         return false; // No need to generate support roof if there's no support.
     }
 
-    const size_t roof_extruder_nr = Application::getInstance().current_slice_->scene.current_mesh_group->settings.get<ExtruderTrain&>("support_roof_extruder_nr").extruder_nr_;
+    const size_t roof_extruder_nr = extruder_nr;
     const ExtruderTrain& roof_extruder = Application::getInstance().current_slice_->scene.extruders[roof_extruder_nr];
 
     const EFillMethod pattern = roof_extruder.settings_.get<EFillMethod>("support_roof_pattern");
@@ -4051,16 +4076,19 @@ bool FffGcodeWriter::addSupportRoofsToGCode(const SliceDataStorage& storage, con
     return true;
 }
 
-bool FffGcodeWriter::addSupportBottomsToGCode(const SliceDataStorage& storage, LayerPlan& gcode_layer) const
+bool FffGcodeWriter::addSupportBottomsToGCode(
+    const SliceDataStorage& storage,
+    const Shape& support_bottom_outlines,
+    const GCodePathConfig& current_bottom_config,
+    LayerPlan& gcode_layer,
+    const size_t extruder_nr) const
 {
-    const SupportLayer& support_layer = storage.support.supportLayers[std::max(LayerIndex{ 0 }, gcode_layer.getLayerNr())];
-
-    if (! storage.support.generated || gcode_layer.getLayerNr() > storage.support.layer_nr_max_filled_layer || support_layer.support_bottom.empty())
+    if (! storage.support.generated || gcode_layer.getLayerNr() > storage.support.layer_nr_max_filled_layer || support_bottom_outlines.empty())
     {
         return false; // No need to generate support bottoms if there's no support.
     }
 
-    const size_t bottom_extruder_nr = Application::getInstance().current_slice_->scene.current_mesh_group->settings.get<ExtruderTrain&>("support_bottom_extruder_nr").extruder_nr_;
+    const size_t bottom_extruder_nr = extruder_nr;
     const ExtruderTrain& bottom_extruder = Application::getInstance().current_slice_->scene.extruders[bottom_extruder_nr];
 
     const EFillMethod pattern = bottom_extruder.settings_.get<EFillMethod>("support_bottom_pattern");
@@ -4097,8 +4125,8 @@ bool FffGcodeWriter::addSupportBottomsToGCode(const SliceDataStorage& storage, L
         pattern,
         zig_zaggify_infill,
         connect_polygons,
-        support_layer.support_bottom,
-        gcode_layer.configs_storage_.support_bottom_config.getLineWidth(),
+        support_bottom_outlines,
+        current_bottom_config.getLineWidth(),
         support_bottom_line_distance,
         support_bottom_overlap,
         infill_multiplier,
@@ -4129,11 +4157,11 @@ bool FffGcodeWriter::addSupportBottomsToGCode(const SliceDataStorage& storage, L
     if (! bottom_polygons.empty())
     {
         gcode_layer.addTravel(bottom_polygons[0][0]);
-        gcode_layer.addPolygonsByOptimizer(bottom_polygons, gcode_layer.configs_storage_.support_bottom_config, bottom_extruder.settings_);
+        gcode_layer.addPolygonsByOptimizer(bottom_polygons, current_bottom_config, bottom_extruder.settings_);
     }
     if (! bottom_paths.empty())
     {
-        const GCodePathConfig& config = gcode_layer.configs_storage_.support_bottom_config;
+        const GCodePathConfig& config = current_bottom_config;
         constexpr coord_t wipe_dist = 0;
         const ZSeamConfig z_seam_config(EZSeamType::SHORTEST, gcode_layer.getLastPlannedPositionOrStartingPosition(), EZSeamCornerPrefType::Z_SEAM_CORNER_PREF_INNER, false);
 
@@ -4161,7 +4189,7 @@ bool FffGcodeWriter::addSupportBottomsToGCode(const SliceDataStorage& storage, L
     }
     gcode_layer.addLinesByOptimizer(
         bottom_lines,
-        gcode_layer.configs_storage_.support_bottom_config,
+        current_bottom_config,
         (pattern == EFillMethod::ZIG_ZAG) ? SpaceFillType::PolyLines : SpaceFillType::Lines);
     return true;
 }

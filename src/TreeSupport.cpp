@@ -2199,6 +2199,8 @@ void TreeSupport::finalizeInterfaceAndSupportAreas(
     SliceDataStorage& storage)
 {
     InterfacePreference interface_pref = config.interface_preference; // InterfacePreference::SUPPORT_LINES_OVERWRITE_INTERFACE;
+    const size_t support_infill_extruder_nr
+        = Application::getInstance().current_slice_->scene.current_mesh_group->settings.get<ExtruderTrain&>("support_infill_extruder_nr").extruder_nr_;
     double progress_total = TREE_PROGRESS_PRECALC_AVO + TREE_PROGRESS_PRECALC_COLL + TREE_PROGRESS_GENERATE_NODES + TREE_PROGRESS_AREA_CALC + TREE_PROGRESS_GENERATE_BRANCH_AREAS
                           + TREE_PROGRESS_SMOOTH_BRANCH_AREAS;
 
@@ -2331,7 +2333,7 @@ void TreeSupport::finalizeInterfaceAndSupportAreas(
 
                 // Clamp wall-thickness to configured values, and draw the support part with the calculated wall-thickness.
                 const auto wall_thickness = std::clamp(weighted_average, config.support_wall_thickness, config.support_enlarged_wall_thickness);
-                storage.support.supportLayers[layer_idx].fillInfillParts(support_part, config.support_line_width, wall_thickness, false, convert_every_part);
+                storage.support.supportLayers[layer_idx].fillInfillParts(support_part, config.support_line_width, wall_thickness, false, convert_every_part, 0, support_infill_extruder_nr);
             }
 
             // This only works because fractional support is always just projected upwards regular support or skin.
@@ -2347,13 +2349,13 @@ void TreeSupport::finalizeInterfaceAndSupportAreas(
                 fractional_support = support_layer_storage_fractional[layer_idx];
             }
 
-            storage.support.supportLayers[layer_idx].fillInfillParts(fractional_support, config.support_line_width, config.support_wall_thickness, true, convert_every_part);
+            storage.support.supportLayers[layer_idx].fillInfillParts(fractional_support, config.support_line_width, config.support_wall_thickness, true, convert_every_part, 0, support_infill_extruder_nr);
 
 
             for (FakeRoofArea& fake_roof : fake_roof_areas[layer_idx])
             {
                 storage.support.supportLayers[layer_idx]
-                    .fillInfillParts(fake_roof.area_, config.support_line_width, 0, fake_roof.fractional_, convert_every_part, fake_roof.line_distance_);
+                    .fillInfillParts(fake_roof.area_, config.support_line_width, 0, fake_roof.fractional_, convert_every_part, fake_roof.line_distance_, support_infill_extruder_nr);
             }
 
 

@@ -182,6 +182,20 @@ private:
     static void generateSupportBottom(SliceDataStorage& storage, const SliceMeshStorage& mesh, std::vector<Shape>& global_support_areas_per_layer);
 
     /*!
+     * Generate support lower skin areas for a given mesh.
+     *
+     * The lower skin is printed with the structure of the support bottom, but with the
+     * support infill extruder of the region it is in. It is stored separately from the
+     * support bottom areas so that the interface is generated preferentially.
+     *
+     * \param storage Where to find the previously generated support areas and
+     * where to output the new support lower skin areas.
+     * \param mesh The mesh to generate support for.
+     * \param global_support_areas_per_layer the global support areas on each layer.
+     */
+    static void generateSupportLowerSkin(SliceDataStorage& storage, const SliceMeshStorage& mesh, std::vector<Shape>& global_support_areas_per_layer);
+
+    /*!
      * Generate support roof areas for a given mesh.
      *
      * The roof areas are separated from the normal support areas in the slice
@@ -280,6 +294,21 @@ private:
      * \return A pair of basic overhang and full overhang.
      */
     static std::pair<Shape, Shape> computeBasicAndFullOverhang(const SliceDataStorage& storage, const SliceMeshStorage& mesh, const LayerIndex& layer_idx);
+
+    /*!
+     * \brief Partition the global support areas of a layer into per-extruder regions.
+     *
+     * The region for the default extruder is all of the global support area that is not
+     * claimed by a support modifier mesh for another extruder. Used to implement the
+     * Rapidia support modifier mesh feature.
+     *
+     * \param storage Where to find the sliced modifier meshes.
+     * \param global_support_areas The global support areas for this layer.
+     * \param layer_nr The layer for which to partition the support areas.
+     * \param default_extruder_nr The extruder that prints the remaining support.
+     * \return A vector indexed by extruder number with the support region for each extruder.
+     */
+    static std::vector<Shape> computeExtruderRegions(const SliceDataStorage& storage, const Shape& global_support_areas, const unsigned int layer_nr, const size_t default_extruder_nr);
 
     /*!
      * \brief Adds tower pieces to the current support layer.

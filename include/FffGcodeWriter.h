@@ -662,9 +662,10 @@ private:
      * Add the support lines/walls to the layer plan \p gcodeLayer of the current layer.
      * \param[in] storage where the slice data is stored.
      * \param gcode_layer The initial planning of the gcode of the layer.
+     * \param extruder_nr The extruder to generate support infill for.
      * \return whether any support infill was added to the layer plan
      */
-    bool processSupportInfill(const SliceDataStorage& storage, LayerPlan& gcode_layer) const;
+    bool processSupportInfill(const SliceDataStorage& storage, LayerPlan& gcode_layer, const size_t extruder_nr) const;
 
     /*!
      * Add the support roofs to the layer plan \p gcodeLayer of the current
@@ -674,19 +675,33 @@ private:
      * \param[in] support_roof_outlines which polygons to generate roofs for.
      * \param[in] current_roof_config config to be used.
      * \param gcodeLayer The initial planning of the g-code of the layer.
+     * \param extruder_nr The extruder to generate the roof/skin with.
      * \return Whether any support skin was added to the layer plan.
      */
-    bool addSupportRoofsToGCode(const SliceDataStorage& storage, const Shape& support_roof_outlines, const GCodePathConfig& current_roof_config, LayerPlan& gcode_layer) const;
+    bool addSupportRoofsToGCode(
+        const SliceDataStorage& storage,
+        const Shape& support_roof_outlines,
+        const GCodePathConfig& current_roof_config,
+        LayerPlan& gcode_layer,
+        const size_t extruder_nr) const;
 
     /*!
      * Add the support bottoms to the layer plan \p gcodeLayer of the current
      * layer.
      *
      * \param[in] storage Where the slice data is stored.
+     * \param[in] support_bottom_outlines which polygons to generate bottoms for.
+     * \param[in] current_bottom_config config to be used.
      * \param gcodeLayer The initial planning of the g-code of the layer.
+     * \param extruder_nr The extruder to generate the bottom/skin with.
      * \return Whether any support skin was added to the layer plan.
      */
-    bool addSupportBottomsToGCode(const SliceDataStorage& storage, LayerPlan& gcodeLayer) const;
+    bool addSupportBottomsToGCode(
+        const SliceDataStorage& storage,
+        const Shape& support_bottom_outlines,
+        const GCodePathConfig& current_bottom_config,
+        LayerPlan& gcodeLayer,
+        const size_t extruder_nr) const;
 
     /*!
      * Change to a new extruder, and add the prime tower instructions if the new extruder is different from the last.

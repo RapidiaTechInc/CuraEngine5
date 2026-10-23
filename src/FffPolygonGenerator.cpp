@@ -234,6 +234,7 @@ bool FffPolygonGenerator::sliceModel(MeshGroup* meshgroup, TimeKeeper& timeKeepe
     {
         const Mesh& mesh = scene.current_mesh_group->meshes[mesh_idx];
         if (mesh.settings_.get<bool>("conical_overhang_enabled") && ! mesh.settings_.get<bool>("anti_overhang_mesh")
+            && ! (mesh.settings_.get<bool>("support_modifier_mesh") && ! mesh.settings_.get<bool>("support_enable"))
             && (! mesh.settings_.has("force_support_overhang_mesh") || ! mesh.settings_.get<bool>("force_support_overhang_mesh")))
         {
             ConicalOverhang::apply(slicerList[mesh_idx], mesh);
