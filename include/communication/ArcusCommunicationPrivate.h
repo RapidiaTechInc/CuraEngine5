@@ -1,5 +1,5 @@
-//Copyright (c) 2018 Ultimaker B.V.
-//CuraEngine is released under the terms of the AGPLv3 or higher.
+// Copyright (c) 2018 Ultimaker B.V.
+// CuraEngine is released under the terms of the AGPLv3 or higher.
 
 #ifndef ARCUSCOMMUNICATIONPRIVATE_H
 #define ARCUSCOMMUNICATIONPRIVATE_H
@@ -9,15 +9,17 @@
 
 #include "ArcusCommunication.h" //We're adding a subclass to this.
 #include "SliceDataStruct.h"
+#include "settings/types/LayerIndex.h"
 
 namespace cura
 {
 
-struct LayerIndex;
+class Mesh;
 
 class ArcusCommunication::Private
 {
     friend class ArcusCommunicationPrivateTest;
+
 public:
     Private();
 
@@ -26,7 +28,7 @@ public:
      * \param layer_nr The layer number to get the optimised layer data for.
      * \return The optimised layer data for that layer.
      */
-    std::shared_ptr<proto::LayerOptimized> getOptimizedLayerById(LayerIndex layer_nr);
+    std::shared_ptr<proto::LayerOptimized> getOptimizedLayerById(LayerIndex::value_type layer_nr);
 
     /*
      * Reads the global settings from a Protobuf message.
@@ -71,9 +73,12 @@ public:
     size_t slice_count; //!< How often we've sliced so far during this run of CuraEngine.
 
     const size_t millisecUntilNextTry; // How long we wait until we try to connect again.
+
+private:
+    static void loadTextureData(const std::string& texture_str, Mesh& mesh);
 };
 
-} //namespace cura
+} // namespace cura
 
-#endif //ARCUS
-#endif //ARCUSCOMMUNICATIONPRIVATE_H
+#endif // ARCUS
+#endif // ARCUSCOMMUNICATIONPRIVATE_H

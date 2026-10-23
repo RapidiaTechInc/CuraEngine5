@@ -1,10 +1,18 @@
-// Copyright (c) 2022 Ultimaker B.V.
-// CuraEngine is released under the terms of the AGPLv3 or higher.
+// Copyright (c) 2024 UltiMaker
+// CuraEngine is released under the terms of the AGPLv3 or higher
 
 #include "settings/Settings.h" //The class under test.
+
+#include <cmath>
+#include <memory> //For shared_ptr.
+#include <numbers>
+
+#include <gtest/gtest.h>
+
 #include "Application.h" //To test extruder train settings.
 #include "ExtruderTrain.h"
 #include "Slice.h"
+#include "settings/EnumSettings.h"
 #include "settings/FlowTempGraph.h"
 #include "settings/types/Angle.h"
 #include "settings/types/Duration.h"
@@ -13,10 +21,7 @@
 #include "settings/types/Temperature.h"
 #include "settings/types/Velocity.h"
 #include "utils/Coord_t.h"
-#include "utils/FMatrix4x3.h" //Testing matrix transformation settings.
-#include <cmath> //For M_PI.
-#include <gtest/gtest.h>
-#include <memory> //For shared_ptr.
+#include "utils/Matrix4x3D.h" //Testing matrix transformation settings.
 
 // NOLINTBEGIN(*-magic-numbers)
 namespace cura
@@ -82,8 +87,8 @@ class Slice; // Forward declaration to save some time compiling.
 TEST_F(SettingsTest, AddSettingExtruderTrain)
 {
     // Add a slice with some extruder trains.
-    std::shared_ptr<Slice> current_slice = std::make_shared<Slice>(0);
-    Application::getInstance().current_slice = current_slice.get();
+    auto current_slice = std::make_shared<Slice>(0);
+    Application::getInstance().current_slice_ = current_slice;
     current_slice->scene.extruders.emplace_back(0, nullptr);
     current_slice->scene.extruders.emplace_back(1, nullptr);
     current_slice->scene.extruders.emplace_back(2, nullptr);
@@ -118,10 +123,11 @@ TEST_F(SettingsTest, AddSettingCoordT)
 TEST_F(SettingsTest, AddSettingAngleRadians)
 {
     settings.add("test_setting", "180");
-    EXPECT_DOUBLE_EQ(AngleRadians(M_PI), settings.get<AngleRadians>("test_setting")) << "180 degrees is 1 pi radians.";
+    EXPECT_DOUBLE_EQ(AngleRadians(std::numbers::pi), settings.get<AngleRadians>("test_setting")) << "180 degrees is 1 pi radians.";
 
     settings.add("test_setting", "810");
-    EXPECT_NEAR(AngleRadians(M_PI / 2.0), settings.get<AngleRadians>("test_setting"), 0.00000001) << "810 degrees in clock arithmetic is 90 degrees, which is 0.5 pi radians.";
+    EXPECT_NEAR(AngleRadians(std::numbers::pi / 2.0), settings.get<AngleRadians>("test_setting"), 0.00000001)
+        << "810 degrees in clock arithmetic is 90 degrees, which is 0.5 pi radians.";
 }
 
 TEST_F(SettingsTest, AddSettingAngleDegrees)
@@ -139,25 +145,25 @@ TEST_F(SettingsTest, AddSettingTemperature)
 TEST_F(SettingsTest, AddSettingVelocity)
 {
     settings.add("test_setting", "12.345");
-    EXPECT_DOUBLE_EQ(Velocity(12.345), settings.get<Velocity>("test_setting"));
+    EXPECT_DOUBLE_EQ(Velocity{ 12.345 }, settings.get<Velocity>("test_setting"));
 
     settings.add("test_setting", "-78");
-    EXPECT_DOUBLE_EQ(Velocity(-78), settings.get<Velocity>("test_setting"));
+    EXPECT_DOUBLE_EQ(Velocity{ -78.0 }, settings.get<Velocity>("test_setting"));
 }
 
 TEST_F(SettingsTest, AddSettingRatio)
 {
     settings.add("test_setting", "1.618");
-    EXPECT_DOUBLE_EQ(Ratio(0.01618), settings.get<Ratio>("test_setting")) << "With ratios, the input is interpreted in percentages.";
+    EXPECT_DOUBLE_EQ(Ratio{ 0.01618 }, settings.get<Ratio>("test_setting")) << "With ratios, the input is interpreted in percentages.";
 }
 
 TEST_F(SettingsTest, AddSettingDuration)
 {
     settings.add("test_setting", "1234.5678");
-    EXPECT_DOUBLE_EQ(Duration(1234.5678), settings.get<Duration>("test_setting"));
+    EXPECT_DOUBLE_EQ(Duration{ 1234.5678 }, settings.get<Duration>("test_setting"));
 
     settings.add("test_setting", "-1234.5678");
-    EXPECT_DOUBLE_EQ(Duration(0), settings.get<Duration>("test_setting")) << "Negative duration doesn't exist, so it gets rounded to 0.";
+    EXPECT_DOUBLE_EQ(Duration{ 0 }, settings.get<Duration>("test_setting")) << "Negative duration doesn't exist, so it gets rounded to 0.";
 }
 
 TEST_F(SettingsTest, AddSettingFlowTempGraph)
@@ -181,7 +187,7 @@ TEST_F(SettingsTest, AddSettingFlowTempGraph)
 TEST_F(SettingsTest, AddSettingFMatrix3x3)
 {
     settings.add("test_setting", "[[1.0, 2.0, 3.3],[ 2 , 3.0 , 1.0],[3.0 ,1.0,2.0 ]]"); // Try various spacing and radixes.
-    auto float_matrix = settings.get<FMatrix4x3>("test_setting");
+    auto float_matrix = settings.get<Matrix4x3D>("test_setting");
 
     EXPECT_DOUBLE_EQ(1.0, float_matrix.m[0][0]);
     EXPECT_DOUBLE_EQ(2.0, float_matrix.m[1][0]);
@@ -217,7 +223,7 @@ TEST_F(SettingsTest, OverwriteSetting)
 TEST_F(SettingsTest, Inheritance)
 {
     std::shared_ptr<Slice> current_slice = std::make_shared<Slice>(0);
-    Application::getInstance().current_slice = current_slice.get();
+    Application::getInstance().current_slice_ = current_slice;
 
     const std::string value = "To be frank, I'd have to change my name.";
     Settings parent;
@@ -234,20 +240,32 @@ TEST_F(SettingsTest, Inheritance)
 TEST_F(SettingsTest, LimitToExtruder)
 {
     std::shared_ptr<Slice> current_slice = std::make_shared<Slice>(0);
-    Application::getInstance().current_slice = current_slice.get();
+    Application::getInstance().current_slice_ = current_slice;
     current_slice->scene.extruders.emplace_back(0, nullptr);
     current_slice->scene.extruders.emplace_back(1, nullptr);
     current_slice->scene.extruders.emplace_back(2, nullptr);
 
     // Add a setting to the extruder this is limiting to.
     const std::string limit_extruder_value = "I was gonna tell a time travelling joke but you didn't like it.";
-    current_slice->scene.extruders[2].settings.add("test_setting", limit_extruder_value);
+    current_slice->scene.extruders[2].settings_.add("test_setting", limit_extruder_value);
     current_slice->scene.limit_to_extruder.emplace("test_setting", &current_slice->scene.extruders[2]);
 
     // Add a decoy setting to the main scene to make sure that we aren't getting the global setting instead.
     current_slice->scene.settings.add("test_setting", "Sting has been kidnapped. The Police have no lead.");
 
     EXPECT_EQ(limit_extruder_value, settings.get<std::string>("test_setting"));
+}
+
+TEST_F(SettingsTest, PluginExtendedEnum)
+{
+    settings.add("infill_type", "PLUGIN::plugin_1::MOZAIC");
+    EXPECT_EQ(settings.get<EFillMethod>("infill_type"), EFillMethod::PLUGIN);
+}
+
+TEST_F(SettingsTest, EnumStringSwitch)
+{
+    settings.add("infill_type", "lightning");
+    EXPECT_EQ(settings.get<EFillMethod>("infill_type"), EFillMethod::LIGHTNING);
 }
 
 } // namespace cura

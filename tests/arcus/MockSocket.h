@@ -4,8 +4,9 @@
 #ifndef MOCKSOCKET_H
 #define MOCKSOCKET_H
 
-#include <Arcus/Socket.h> //Inheriting from this to be able to swap this socket in the tested class.
 #include <deque> //History of sent and received messages.
+
+#include <Arcus/Socket.h> //Inheriting from this to be able to swap this socket in the tested class.
 
 namespace cura
 {
@@ -21,13 +22,13 @@ public:
     MockSocket();
 
     // These functions are overridden to be no-op.
-    void connect(const std::string& address, int port) override;
-    void listen(const std::string& address, int port) override;
+    void connect(const std::string& address, uint16_t port) override;
+    void listen(const std::string& address, uint16_t port) override;
     void close() override;
     void reset() override;
 
     // Catch these functions so that we can see whether they are called.
-    void sendMessage(Arcus::MessagePtr message) override;
+    bool sendMessage(Arcus::MessagePtr message) override;
     Arcus::MessagePtr takeNextMessage() override;
 
     // Helpers to store send and received messages.

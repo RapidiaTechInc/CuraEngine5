@@ -1,5 +1,5 @@
-// Copyright (c) 2022 Ultimaker B.V.
-// CuraEngine is released under the terms of the AGPLv3 or higher.
+// Copyright (c) 2023 UltiMaker
+// CuraEngine is released under the terms of the AGPLv3 or higher
 
 #ifndef SETTINGS_SETTINGS_H
 #define SETTINGS_SETTINGS_H
@@ -44,7 +44,13 @@ public:
      * \param value The value of the setting. The value is always added and
      * stored in serialised form as a string.
      */
-    void add(const std::string& key, const std::string value);
+    void add(const std::string& key, const std::string& value);
+
+    /*!
+     * @brief Removes a setting, if existing
+     * @param key The name of the setting to be removed
+     */
+    void remove(const std::string& key);
 
     /*!
      * \brief Get the value of a setting.
@@ -64,7 +70,8 @@ public:
      * \param key The key of the setting to get.
      * \return The setting's value, cast to the desired type.
      */
-    template<typename A> A get(const std::string& key) const;
+    template<typename A>
+    A get(const std::string& key) const;
 
     /*!
      * \brief Get a string containing all settings in this container.
@@ -83,24 +90,29 @@ public:
      * If this returns ``false``, that means that the setting would be obtained
      * via some inheritance.
      * \param key The setting to check.
+     * \param parent_lookup Indicates whether the setting should also be looked up in the parent settings, as the get() would
      * \return Whether that setting is contained in this particular Settings
      * instance (``true``) or would be obtained via inheritance (``false``).
      */
-    bool has(const std::string& key) const;
+    bool has(const std::string& key, const bool parent_lookup = false) const;
 
     /*
      * Change the parent settings object.
      *
      * If this set of settings has no value for a setting, the parent is asked.
      */
-    void setParent(Settings* new_parent);
+    void setParent(const Settings* new_parent);
+
+    std::unordered_map<std::string, std::string> getFlattendSettings() const;
+
+    std::vector<std::string> getKeys() const;
 
 private:
     /*!
      * Optionally, a parent setting container to ask for the value of a setting
      * if this container has no value for it.
      */
-    Settings* parent;
+    const Settings* parent;
 
     /*!
      * \brief A dictionary to map the setting keys to the actual setting values.
@@ -119,7 +131,6 @@ private:
     std::string getWithoutLimiting(const std::string& key) const;
 };
 
-} //namespace cura
+} // namespace cura
 
-#endif //SETTINGS_SETTINGS_H
-
+#endif // SETTINGS_SETTINGS_H

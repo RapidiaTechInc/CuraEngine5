@@ -1,0 +1,180 @@
+// Copyright (c) 2023 UltiMaker
+// CuraEngine is released under the terms of the AGPLv3 or higher
+
+#include "ExtruderPlan.h"
+
+#include <range/v3/algorithm/any_of.hpp>
+
+#include "gcode_export/gcodeExport.h"
+
+
+namespace cura
+{
+ExtruderPlan::ExtruderPlan(
+    const size_t extruder,
+    const LayerIndex layer_nr,
+    const bool is_initial_layer,
+    const bool is_raft_layer,
+    const coord_t layer_thickness,
+    const FanSpeedLayerTimeSettings& fan_speed_layer_time_settings,
+    const RetractionConfig& retraction_config)
+    : extruder_nr_(extruder)
+    , layer_nr_(layer_nr)
+    , is_initial_layer_(is_initial_layer)
+    , is_raft_layer_(is_raft_layer)
+    , layer_thickness_(layer_thickness)
+    , fan_speed_layer_time_settings_(fan_speed_layer_time_settings)
+    , retraction_config_(retraction_config)
+{
+}
+
+void ExtruderPlan::insertCommand(NozzleTempInsert&& insert)
+{
+    inserts_.emplace_back(insert);
+}
+
+void ExtruderPlan::handleInserts(const size_t path_idx, GCodeExport& gcode, const double cumulative_path_time)
+{
+    while (! inserts_.empty())
+    {
+        const NozzleTempInsert& insert = inserts_.front();
+        const bool in_future_path = insert.path_idx > path_idx;
+        const bool in_current_path_at_future_time = insert.path_idx == path_idx && insert.time_after_path_start > cumulative_path_time;
+        if (in_future_path || in_current_path_at_future_time)
+        {
+            break;
+        }
+        // Either the insert is overdue (insert.path_idx < path_idx) and must be fired immediately,
+        // or it is exactly on time (insert.path_idx == path_idx and time threshold reached).
+        inserts_.front().write(gcode);
+        inserts_.pop_front();
+    }
+}
+
+void ExtruderPlan::handleAllRemainingInserts(GCodeExport& gcode)
+{
+    while (! inserts_.empty())
+    { // handle the Insert to be inserted before this path_idx (and all inserts not handled yet)
+        NozzleTempInsert& insert = inserts_.front();
+        insert.write(gcode);
+        inserts_.pop_front();
+    }
+}
+
+void ExtruderPlan::setFanSpeed(double _fan_speed)
+{
+    fan_speed = _fan_speed;
+}
+double ExtruderPlan::getFanSpeed()
+{
+    return fan_speed;
+}
+
+void ExtruderPlan::applyBackPressureCompensation(const Ratio back_pressure_compensation)
+{
+    constexpr double epsilon_speed_factor = 0.001; // Don't put on actual 'limit double minimum', because we don't want printers to stall.
+    for (auto& path : paths_)
+    {
+        const double nominal_width_for_path = static_cast<double>(path.config.getLineWidth());
+        if (path.width_factor <= 0.0 || nominal_width_for_path <= 0.0 || path.config.isTravelPath() || path.config.isBridgePath())
+        {
+            continue;
+        }
+        const double line_width_for_path = path.width_factor * nominal_width_for_path;
+        path.speed_back_pressure_factor = std::max(epsilon_speed_factor, 1.0 + (nominal_width_for_path / line_width_for_path - 1.0) * back_pressure_compensation);
+    }
+}
+
+std::shared_ptr<const SliceMeshStorage> ExtruderPlan::findFirstPrintedMesh() const
+{
+    for (const GCodePath& path : paths_)
+    {
+        if (path.mesh)
+        {
+            return path.mesh;
+        }
+    }
+
+    return nullptr;
+}
+
+bool ExtruderPlan::hasExtrusion() const
+{
+    return ranges::any_of(
+        paths_,
+        [](const GCodePath& path)
+        {
+            return ! path.isTravelPath() && ! path.points.empty();
+        });
+}
+
+AABB ExtruderPlan::calculateExtrusionBoundingBox() const
+{
+    std::optional<Point2LL> current_position;
+    AABB bounding_box;
+
+    for (const GCodePath& gcode_path : paths_)
+    {
+        if (gcode_path.points.empty())
+        {
+            continue;
+        }
+
+        if (! gcode_path.isTravelPath())
+        {
+            if (current_position.has_value())
+            {
+                bounding_box.include(current_position.value());
+            }
+            for (const Point3LL& position : gcode_path.points)
+            {
+                bounding_box.include(position.toPoint2LL());
+            }
+        }
+
+        current_position = gcode_path.points.back().toPoint2LL();
+    }
+
+    return bounding_box;
+}
+
+coord_t ExtruderPlan::calculateMaxOverhangLength() const
+{
+    coord_t max_overhang_length = 0;
+    bool overhanging = false;
+    coord_t current_overhang_length = 0;
+    std::optional<Point2LL> current_position;
+
+    for (const GCodePath& path : paths_)
+    {
+        const bool new_overhanging = path.print_attributes.isSet(PrintSegmentAttribute::Overhanging);
+        if (new_overhanging != overhanging)
+        {
+            if (overhanging)
+            {
+                max_overhang_length = std::max(max_overhang_length, current_overhang_length);
+            }
+
+            current_overhang_length = 0;
+        }
+
+        if (new_overhanging)
+        {
+            for (const Point3LL& position : path.points)
+            {
+                if (current_position.has_value())
+                {
+                    current_overhang_length += vSize(position.toPoint2LL() - current_position.value());
+                }
+                current_position = position.toPoint2LL();
+            }
+        }
+
+        current_position = path.points.back().toPoint2LL();
+        overhanging = new_overhanging;
+    }
+
+    return std::max(max_overhang_length, current_overhang_length);
+}
+
+} // namespace cura

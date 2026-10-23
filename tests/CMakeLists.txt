@@ -5,57 +5,45 @@ message(STATUS "Building tests...")
 include(GoogleTest)
 
 set(TESTS_SRC_BASE
+        AntiOozeAmountsTest
         ClipperTest
         ExtruderPlanTest
+        FffGcodeWriterTest
         GCodeExportTest
+        GCodeTemplateResolverTest
         InfillTest
         LayerPlanTest
         PathOrderOptimizerTest
         PathOrderMonotonicTest
         TimeEstimateCalculatorTest
         WallsComputationTest
-        )
+)
 
 set(TESTS_SRC_INTEGRATION
         SlicePhaseTest
-        )
+)
 
 set(TESTS_SRC_SETTINGS
         SettingsTest
-        )
+)
 
 set(TESTS_SRC_UTILS
         AABBTest
         AABB3DTest
+        CoordTTest
         IntPointTest
         LinearAlg2DTest
+        MathTest
         MinimumSpanningTreeTest
         PolygonConnectorTest
         PolygonTest
         PolygonUtilsTest
         SimplifyTest
+        SmoothTest
         SparseGridTest
         StringTest
         UnionFindTest
-        )
-
-set(TESTS_HELPERS_SRC ReadTestPolygons.cpp)
-
-set(TESTS_SRC_ARCUS)
-if (ENABLE_ARCUS)
-    list(APPEND TESTS_SRC_ARCUS
-            ArcusCommunicationTest
-            ArcusCommunicationPrivateTest)
-    list(APPEND TESTS_HELPERS_SRC arcus/MockSocket.cpp)
-endif ()
-
-add_library(test_helpers ${TESTS_HELPERS_SRC})
-target_compile_definitions(test_helpers PUBLIC $<$<BOOL:${BUILD_TESTING}>:BUILD_TESTS> $<$<BOOL:${ENABLE_ARCUS}>:ARCUS>)
-target_include_directories(test_helpers PUBLIC "../include")
-target_link_libraries(test_helpers PRIVATE _CuraEngine GTest::gtest GTest::gmock clipper::clipper)
-if (ENABLE_ARCUS)
-    target_link_libraries(test_helpers PUBLIC arcus::arcus protobuf::libprotobuf)
-endif ()
+)
 
 foreach (test ${TESTS_SRC_BASE})
     add_executable(${test} main.cpp ${test}.cpp)

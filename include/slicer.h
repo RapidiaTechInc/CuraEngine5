@@ -1,13 +1,17 @@
-//Copyright (c) 2018 Ultimaker B.V.
-//CuraEngine is released under the terms of the AGPLv3 or higher.
+// Copyright (c) 2024 UltiMaker
+// CuraEngine is released under the terms of the AGPLv3 or higher.
 
 #ifndef SLICER_H
 #define SLICER_H
 
+#include <optional>
 #include <queue>
 #include <unordered_map>
-#include "utils/polygon.h"
+
+#include "geometry/OpenLinesSet.h"
+#include "geometry/Shape.h"
 #include "settings/EnumSettings.h"
+#include "utils/Point2F.h"
 
 /*
     The Slicer creates layers of polygons from an optimized 3D model.
@@ -19,11 +23,14 @@ namespace cura
 class AdaptiveLayer;
 class Mesh;
 class MeshVertex;
+class Point3D;
+class SlicedUVCoordinates;
 
 class SlicerSegment
 {
 public:
-    Point start, end;
+    Point2LL start, end;
+    std::optional<Point2F> uv_start, uv_end;
     int faceIndex = -1;
     // The index of the other face connected via the edge that created end
     int endOtherFaceIdx = -1;
@@ -34,31 +41,33 @@ public:
 };
 
 class ClosePolygonResult
-{   //The result of trying to find a point on a closed polygon line. This gives back the point index, the polygon index, and the point of the connection.
-    //The line on which the point lays is between pointIdx-1 and pointIdx
+{ // The result of trying to find a point on a closed polygon line. This gives back the point index, the polygon index, and the point of the connection.
+  // The line on which the point lays is between pointIdx-1 and pointIdx
 public:
-    int polygonIdx = -1;
-    size_t pointIdx = -1;
+    size_t polygonIdx = 0;
+    size_t pointIdx = 0;
 };
+
 class GapCloserResult
 {
 public:
-    coord_t len = -1;
-    int polygonIdx = -1;
-    size_t pointIdxA = -1;
-    size_t pointIdxB = -1;
+    coord_t len = 0;
+    size_t polygonIdx = 0;
+    size_t pointIdxA = 0;
+    size_t pointIdxB = 0;
     bool AtoB = false;
 };
 
 class SlicerLayer
 {
 public:
-    std::vector<SlicerSegment> segments;
-    std::unordered_map<int, int> face_idx_to_segment_idx; // topology
+    std::vector<SlicerSegment> segments_;
+    std::unordered_map<int, int> face_idx_to_segment_idx_; // topology
 
-    int z = -1;
-    Polygons polygons;
-    Polygons openPolylines;
+    int z_ = -1;
+    Shape polygons_;
+    OpenLinesSet open_polylines_;
+    std::shared_ptr<SlicedUVCoordinates> sliced_uv_coordinates_;
 
     /*!
      * \brief Connect the segments into polygons for this layer of this \p mesh.
@@ -73,7 +82,7 @@ protected:
      *
      * \param[in,out] open_polylines The polylines which are stiched, but couldn't be closed into a loop
      */
-    void makeBasicPolygonLoops(Polygons& open_polylines);
+    void makeBasicPolygonLoops(OpenLinesSet& open_polylines);
 
     /*!
      * Connect the segments into a loop, starting from the segment with index \p start_segment_idx
@@ -81,7 +90,7 @@ protected:
      * \param[in,out] open_polylines The polylines which are stiched, but couldn't be closed into a loop
      * \param[in] start_segment_idx The index into SlicerLayer::segments for the first segment from which to start the polygon loop
      */
-    void makeBasicPolygonLoop(Polygons& open_polylines, const size_t start_segment_idx);
+    void makeBasicPolygonLoop(OpenLinesSet& open_polylines, const size_t start_segment_idx);
 
     /*!
      * Get the next segment connected to the end of \p segment.
@@ -101,7 +110,7 @@ protected:
      *
      * \param[in,out] open_polylines The polylines which are stiched, but couldn't be closed into a loop
      */
-    void connectOpenPolylines(Polygons& open_polylines);
+    void connectOpenPolylines(OpenLinesSet& open_polylines);
 
     /*!
      * Link up all the missing ends, closing up the smallest gaps first. This is an inefficient implementation which can run in O(n*n*n) time.
@@ -110,11 +119,11 @@ protected:
      *
      * \param[in,out] open_polylines The polylines which are stiched, but couldn't be closed into a loop yet
      */
-    void stitch(Polygons& open_polylines);
+    void stitch(OpenLinesSet& open_polylines);
 
-    GapCloserResult findPolygonGapCloser(Point ip0, Point ip1);
+    std::optional<GapCloserResult> findPolygonGapCloser(Point2LL ip0, Point2LL ip1);
 
-    ClosePolygonResult findPolygonPointClosestTo(Point input);
+    std::optional<ClosePolygonResult> findPolygonPointClosestTo(Point2LL input);
 
     /*!
      * Try to close up polylines into polygons while they have large gaps in them.
@@ -123,7 +132,7 @@ protected:
      *
      * \param[in,out] open_polylines The polylines which are stiched, but couldn't be closed into a loop yet
      */
-    void stitch_extensive(Polygons& open_polylines);
+    void stitch_extensive(OpenLinesSet& open_polylines);
 
 private:
     /*!
@@ -151,7 +160,8 @@ private:
 
         /*! Constructor leaving uninitialized. */
         Terminus()
-        {}
+        {
+        }
 
         /*! Constructor from Index representation.
          *
@@ -159,7 +169,7 @@ private:
          */
         Terminus(Index idx)
         {
-            m_idx = idx;
+            idx_ = idx;
         }
 
         /*! Constuctor from the polyline index and which end of the polyline.
@@ -168,19 +178,19 @@ private:
          */
         Terminus(size_t polyline_idx, bool is_end)
         {
-            m_idx = polyline_idx * 2  + (is_end ? 1 : 0);
+            idx_ = polyline_idx * 2 + (is_end ? 1 : 0);
         }
 
         /*! Gets the polyline index for this Terminus. */
         size_t getPolylineIdx() const
         {
-            return m_idx / 2;
+            return idx_ / 2;
         }
 
         /*! Gets whether this Terminus represents the end point of the polyline. */
         bool isEnd() const
         {
-            return (m_idx & 1) == 1;
+            return (idx_ & 1) == 1;
         }
 
         /*! Gets the Index representation of this Terminus.
@@ -201,7 +211,7 @@ private:
          */
         Index asIndex() const
         {
-            return m_idx;
+            return idx_;
         }
 
         /*! Calculates the Terminus end Index from the polyline vector end index.
@@ -213,23 +223,23 @@ private:
          */
         static Index endIndexFromPolylineEndIndex(unsigned int polyline_end_idx)
         {
-            return polyline_end_idx*2;
+            return polyline_end_idx * 2;
         }
 
         /*! Tests for equality.
-        *
-        * Two Terminus are equal if they return the same results for
-        * \ref getPolylineIdx() and \ref isEnd().
-        */
-        bool operator==(const Terminus &other)
+         *
+         * Two Terminus are equal if they return the same results for
+         * \ref getPolylineIdx() and \ref isEnd().
+         */
+        bool operator==(const Terminus& other)
         {
-            return m_idx == other.m_idx;
+            return idx_ == other.idx_;
         }
 
         /*! Tests for inequality. */
-        bool operator!=(const Terminus &other)
+        bool operator!=(const Terminus& other)
         {
-            return m_idx != other.m_idx;
+            return idx_ != other.idx_;
         }
 
     private:
@@ -237,7 +247,7 @@ private:
          *
          * The polyline_idx and end flags are calculated from this on demand.
          */
-        Index m_idx = -1;
+        Index idx_ = std::numeric_limits<Index>::max();
     };
 
     /*!
@@ -276,8 +286,7 @@ private:
         bool in_order() const
         {
             // in order if using back of line 0 and front of line 1
-            return terminus_0.isEnd() &&
-                !terminus_1.isEnd();
+            return terminus_0.isEnd() && ! terminus_1.isEnd();
         }
 
         /*! Orders PossibleStitch by goodness.
@@ -285,8 +294,8 @@ private:
          * Better PossibleStitch are > then worse PossibleStitch.
          * priority_queue will give greatest first so greatest
          * must be most desirable stitch
-        */
-        bool operator<(const PossibleStitch &other) const;
+         */
+        bool operator<(const PossibleStitch& other) const;
     };
 
     /*!
@@ -321,7 +330,7 @@ private:
          * \return The current Terminus location or INVALID_TERMINUS
          *     if the old endpoint is no longer an endpoint.
          */
-        Terminus getCurFromOld(const Terminus &old) const
+        Terminus getCurFromOld(const Terminus& old) const
         {
             return m_terminus_old_to_cur_map[old.asIndex()];
         }
@@ -334,7 +343,7 @@ private:
          *     INVALID_TERMINUS if the old Terminus location was
          *     removed (used to form a Polygon).
          */
-        Terminus getOldFromCur(const Terminus &cur) const
+        Terminus getOldFromCur(const Terminus& cur) const
         {
             return m_terminus_cur_to_old_map[cur.asIndex()];
         }
@@ -344,7 +353,7 @@ private:
          * This marks the current Terminus as being removed from the
          * polyline vector.
          */
-        void markRemoved(const Terminus &cur)
+        void markRemoved(const Terminus& cur)
         {
             Terminus old = getOldFromCur(cur);
             m_terminus_old_to_cur_map[old.asIndex()] = Terminus::INVALID_TERMINUS;
@@ -379,10 +388,7 @@ private:
          * \param removed_cur_terms The Terminus locations that will
          *     be removed after the update.
          */
-        void updateMap(size_t num_terms,
-                       const Terminus *cur_terms, const Terminus *next_terms,
-                       size_t num_removed_terms,
-                       const Terminus *removed_cur_terms);
+        void updateMap(size_t num_terms, const Terminus* cur_terms, const Terminus* next_terms, size_t num_removed_terms, const Terminus* removed_cur_terms);
 
     private:
         /*! map from old terminus location to current terminus location */
@@ -398,8 +404,7 @@ private:
      * \param[in] face_idx The index of the face that might have generated a continuation segment.
      * \param[in] start_segment_idx The index of the segment that started this polyline.
      */
-    int tryFaceNextSegmentIdx(const SlicerSegment& segment,
-                              const int face_idx, const size_t start_segment_idx) const;
+    int tryFaceNextSegmentIdx(const SlicerSegment& segment, const int face_idx, const size_t start_segment_idx) const;
 
     /*!
      * Find possible allowed stitches in goodness order.
@@ -418,9 +423,7 @@ private:
      *     the order of a polyline.
      * \return The stitches that are allowed in order from best to worst.
      */
-    std::priority_queue<PossibleStitch> findPossibleStitches(
-        const Polygons& open_polylines, coord_t max_dist, coord_t cell_size,
-        bool allow_reverse) const;
+    std::priority_queue<PossibleStitch> findPossibleStitches(const OpenLinesSet& open_polylines, coord_t max_dist, coord_t cell_size, bool allow_reverse) const;
 
     /*! Plans the best way to perform a stitch.
      *
@@ -438,9 +441,7 @@ private:
      * \param[in,out] terminus_1 the Terminus on polyline_1 to join at.
      * \param[out] reverse Whether the polylines need to be reversed.
      */
-    void planPolylineStitch(const Polygons& open_polylines,
-                            Terminus& terminus_0, Terminus& terminus_1,
-                            bool reverse[2]) const;
+    void planPolylineStitch(const OpenLinesSet& open_polylines, Terminus& terminus_0, Terminus& terminus_1, bool reverse[2]) const;
 
     /*! Joins polyline_1 onto polyline_0.
      *
@@ -458,8 +459,7 @@ private:
      *     polyline_0 and reverse[1] indicates whether to reverse
      *     polyline_1
      */
-    void joinPolylines(PolygonRef& polyline_0, PolygonRef& polyline_1,
-                       const bool reverse[2]) const;
+    static void joinPolylines(OpenPolyline& polyline_0, OpenPolyline& polyline_1, const bool reverse[2]);
 
     /*!
      * Connecting polylines that are not closed yet.
@@ -479,9 +479,7 @@ private:
      * \param[in] allow_reverse If true, then this function is allowed
      *     to reverse edge directions to merge polylines.
      */
-    void connectOpenPolylinesImpl(Polygons& open_polylines,
-                                  coord_t max_dist, coord_t cell_size,
-                                  bool allow_reverse);
+    void connectOpenPolylinesImpl(OpenLinesSet& open_polylines, coord_t max_dist, coord_t cell_size, bool allow_reverse);
 };
 
 class Slicer
@@ -491,11 +489,17 @@ public:
 
     const Mesh* mesh = nullptr; //!< The sliced mesh
 
-    Slicer(Mesh* mesh, const coord_t thickness, const size_t slice_layer_count, bool use_variable_layer_heights, std::vector<AdaptiveLayer> *adaptive_layers);
+    Slicer(
+        Mesh* mesh,
+        const coord_t thickness,
+        const size_t slice_layer_count,
+        bool use_variable_layer_heights,
+        std::vector<AdaptiveLayer>* adaptive_layers,
+        const SlicingTolerance slicing_tolerance,
+        const coord_t initial_layer_thickness);
 
 
 private:
-
     /*!
      * \brief Linear interpolation between coordinates of a line.
      *
@@ -511,6 +515,26 @@ private:
     static coord_t interpolate(const coord_t x, const coord_t x0, const coord_t x1, const coord_t y0, const coord_t y1);
 
     /*!
+     * Interpolate the UV coordinates at the 3 points of the given triangle to the given position in barycentric coordinates
+     * @param barycentric_coordinates The target position in barycentric coordinates
+     * @param uv0 The UV coordinates at point 0 of the triangle
+     * @param uv1 The UV coordinates at point 1 of the triangle
+     * @param uv2 The UV coordinates at point 2 of the triangle
+     * @return The interpolated UV coordinates at the given position
+     */
+    static Point2F interpolateUV(const Point3D& barycentric_coordinates, const Point2F& uv0, const Point2F& uv1, const Point2F& uv2);
+
+    /*!
+     * Get the barycentric coordinates of the given point in the given triangle
+     * @param point The 3D point that is inside the given triangle
+     * @param p0 The coordinates of point 0 of the triangle
+     * @param p1 The coordinates of point 1 of the triangle
+     * @param p2 The coordinates of point 2 of the triangle
+     * @return The barycentric coordinates of the given point
+     */
+    static std::optional<Point3D> getBarycentricCoordinates(const Point3LL& point, const Point3LL& p0, const Point3LL& p1, const Point3LL& p2);
+
+    /*!
      * \brief Project a triangle onto a 2D layer.
      *
      * The result is a SlicerSegment object, which is a line segment if the
@@ -522,51 +546,56 @@ private:
      * \param z The Z coordinate of the layer to intersect with.
      * \return A slicer segment.
      */
-    static SlicerSegment project2D(const Point3& p0, const Point3& p1, const Point3& p2, const coord_t z);
+    static SlicerSegment project2D(
+        const Point3LL& p0,
+        const Point3LL& p1,
+        const Point3LL& p2,
+        const std::optional<Point2F>& uv0,
+        const std::optional<Point2F>& uv1,
+        const std::optional<Point2F>& uv2,
+        const coord_t z);
 
     /*! Creates an array of "z bounding boxes" for each face.
-    * \param[in] mesh The mesh which is analyzed.
-    * \return z heights aka z bounding boxes of the faces.
-    */
-    static std::vector<std::pair<int32_t, int32_t>> buildZHeightsForFaces(const Mesh &mesh);
+     * \param[in] mesh The mesh which is analyzed.
+     * \return z heights aka z bounding boxes of the faces.
+     */
+    static std::vector<std::pair<int32_t, int32_t>> buildZHeightsForFaces(const Mesh& mesh);
 
     /*! Creates the polygons in layers.
-    * \param[in] mesh The mesh which is analyzed.
-    * \param[in] slicing_tolerance The way the slicing tolerance should be applied (MIDDLE/INCLUSIVE/EXCLUSIVE).
-    * \param[in, out] layers The polygon are created here.
-    */
+     * \param[in] mesh The mesh which is analyzed.
+     * \param[in] slicing_tolerance The way the slicing tolerance should be applied (MIDDLE/INCLUSIVE/EXCLUSIVE).
+     * \param[in, out] layers The polygon are created here.
+     */
     static void makePolygons(Mesh& mesh, SlicingTolerance slicing_tolerance, std::vector<SlicerLayer>& layers);
 
     /*! Creates a vector of layers and set their z value.
-    * \param[in] mesh The mesh which is analyzed.
-    * \param[in] slice_layer_count The amount of layers which shall be sliced.
-    * \param[in] slicing_tolerance The way the slicing tolerance should be applied (MIDDLE/INCLUSIVE/EXCLUSIVE).
-    * \param[in] initial_layer_thickness Thickness of the first layer.
-    * \param[in] thickness Thickness of the layers (apart the first one).
-    * \param[in] use_variable_layer_heights Shall we use adaptive layer heights.
-    * \param[in] adaptive_layers Adaptive layers (if use_variable_layer_heights).
-    * \return layers with set z values.
-    */
-    static std::vector<SlicerLayer> buildLayersWithHeight(size_t slice_layer_count, SlicingTolerance slicing_tolerance,
-        coord_t initial_layer_thickness, coord_t thickness, bool use_variable_layer_heights,
+     * \param[in] mesh The mesh which is analyzed.
+     * \param[in] slice_layer_count The amount of layers which shall be sliced.
+     * \param[in] slicing_tolerance The way the slicing tolerance should be applied (MIDDLE/INCLUSIVE/EXCLUSIVE).
+     * \param[in] initial_layer_thickness Thickness of the first layer.
+     * \param[in] thickness Thickness of the layers (apart the first one).
+     * \param[in] use_variable_layer_heights Shall we use adaptive layer heights.
+     * \param[in] adaptive_layers Adaptive layers (if use_variable_layer_heights).
+     * \return layers with set z values.
+     */
+    static std::vector<SlicerLayer> buildLayersWithHeight(
+        size_t slice_layer_count,
+        SlicingTolerance slicing_tolerance,
+        coord_t initial_layer_thickness,
+        coord_t thickness,
+        bool use_variable_layer_heights,
         const std::vector<AdaptiveLayer>* adaptive_layers);
 
     /*! Creates the segments and write them into the layers.
-    * \param[in] mesh The mesh which is analyzed.
-    * \param[in] zbboxes The z part of the bounding boxes of the faces of the mesh.
-    * \param[in] slicing_tolderance Slicing tolerance in order to figure out what happens when vertices are exactly on the slicing boundary.
-    * \param[in, out] layers The segments are created here.
-    */
-    static void buildSegments
-    (
-        const Mesh& mesh,
-        const std::vector<std::pair<int32_t, int32_t>> &zbboxes,
-        const SlicingTolerance& slicing_tolerance,
-        std::vector<SlicerLayer>& layers
-    );
-
+     * \param[in] mesh The mesh which is analyzed.
+     * \param[in] zbboxes The z part of the bounding boxes of the faces of the mesh.
+     * \param[in] slicing_tolderance Slicing tolerance in order to figure out what happens when vertices are exactly on the slicing boundary.
+     * \param[in, out] layers The segments are created here.
+     */
+    static void
+        buildSegments(const Mesh& mesh, const std::vector<std::pair<int32_t, int32_t>>& zbboxes, const SlicingTolerance& slicing_tolerance, std::vector<SlicerLayer>& layers);
 };
 
-}//namespace cura
+} // namespace cura
 
-#endif//SLICER_H
+#endif // SLICER_H

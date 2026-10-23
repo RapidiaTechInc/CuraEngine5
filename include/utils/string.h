@@ -4,10 +4,14 @@
 #ifndef UTILS_STRING_H
 #define UTILS_STRING_H
 
-#include <cstdio> // sprintf
+#include <cmath>
+#include <cstdio> // snprintf
 #include <ctype.h>
 #include <sstream> // ostringstream
 
+#include <boost/archive/iterators/base64_from_binary.hpp>
+#include <boost/archive/iterators/ostream_iterator.hpp>
+#include <boost/archive/iterators/transform_width.hpp>
 #include <spdlog/spdlog.h>
 
 namespace cura
@@ -26,6 +30,30 @@ static inline int stringcasecompare(const char* a, const char* b)
     return *a - *b;
 }
 
+// Convert string to base64 string.
+// This function is useful to forward string through javascript even if they contain any special strings
+//
+[[maybe_unused]] static std::string convertTobase64(const std::string& input)
+{
+    using namespace boost::archive::iterators;
+    // prepare the stream to hold the encoded data
+    std::stringstream output;
+
+    // encode data
+    typedef base64_from_binary<transform_width<std::string::const_iterator, 6, 8>> base64_enc;
+    std::copy(base64_enc(input.begin()), base64_enc(input.end()), ostream_iterator<char>(output));
+
+    // Retrieve the encoded string
+    std::string output_encoded = output.str();
+
+    // ensure padding if needed
+    size_t num = (3 - input.length() % 3) % 3;
+    for (size_t i = 0; i < num; i++)
+    {
+        output_encoded.push_back('=');
+    }
+    return output_encoded;
+}
 /*!
  * Efficient conversion of micron integer type to millimeter string.
  *
@@ -40,7 +68,8 @@ static inline void writeInt2mm(const int32_t coord, std::ostream& ss)
 {
     constexpr size_t buffer_size = 24;
     char buffer[buffer_size];
-    int char_count = sprintf(buffer, "%d", coord); // we haven't found any way for the windows compiler to accept formatting of a coord_t, so it has to be int32_t instead
+    int char_count
+        = snprintf(buffer, buffer_size, "%d", coord); // we haven't found any way for the windows compiler to accept formatting of a coord_t, so it has to be int32_t instead
 #ifdef DEBUG
     if (char_count + 1 >= int(buffer_size)) // + 1 for the null character
     {
@@ -121,13 +150,13 @@ struct MMtoStream
  * \param coord double to output
  * \param ss The output stream to write the string to
  */
-static inline void writeDoubleToStream(const unsigned int precision, const double coord, std::ostream& ss)
+static inline void writeDoubleToStream(const uint8_t precision, const double coord, std::ostream& ss)
 {
     char format[5] = "%.xF"; // write a float with [x] digits after the dot
-    format[2] = '0' + precision; // set [x]
+    format[2] = '0' + static_cast<char>(precision); // set [x]
     constexpr size_t buffer_size = 400;
     char buffer[buffer_size];
-    int char_count = sprintf(buffer, format, coord);
+    int char_count = snprintf(buffer, buffer_size, format, coord);
 #ifdef DEBUG
     if (char_count + 1 >= int(buffer_size)) // + 1 for the null character
     {
@@ -166,8 +195,19 @@ static inline void writeDoubleToStream(const unsigned int precision, const doubl
  */
 struct PrecisionedDouble
 {
-    unsigned int precision; //!< Number of digits after the decimal mark with which to convert to string
+    uint8_t precision; //!< Number of digits after the decimal mark with which to convert to string
     double value; //!< The double value
+
+    bool wouldWriteZero() const
+    {
+        return (std::abs(value) * std::pow(10.0, precision)) < 1.0;
+    }
+
+    static bool equalGivenPrecision(const PrecisionedDouble& a, const PrecisionedDouble& b)
+    {
+        // We expect the 'value's here to be in the hundereds or thousands or so at max, so this implementation should be OK.
+        return (a.value == b.value) || (std::round(a.value * std::pow(10, a.precision)) == std::round(b.value * std::pow(10, b.precision)));
+    }
 
     friend inline std::ostream& operator<<(std::ostream& out, const PrecisionedDouble precision_and_input)
     {

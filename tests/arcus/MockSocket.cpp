@@ -8,10 +8,10 @@ namespace cura
 
 MockSocket::MockSocket() = default;
 
-void MockSocket::connect(const std::string& address, int port)
+void MockSocket::connect(const std::string& address, uint16_t port)
 { /* Do nothing. */
 }
-void MockSocket::listen(const std::string& address, int port)
+void MockSocket::listen(const std::string& address, uint16_t port)
 { /* Do nothing. */
 }
 void MockSocket::close()
@@ -21,9 +21,10 @@ void MockSocket::reset()
 { /* Do nothing. */
 }
 
-void MockSocket::sendMessage(Arcus::MessagePtr message)
+bool MockSocket::sendMessage(Arcus::MessagePtr message)
 {
     sent_messages.push_back(message);
+    return true;
 }
 
 Arcus::MessagePtr MockSocket::takeNextMessage()

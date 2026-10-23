@@ -4,11 +4,13 @@
 #ifndef SUPPORT_INFILL_PART_H
 #define SUPPORT_INFILL_PART_H
 
+#include <optional>
 #include <vector>
 
+#include "geometry/Polygon.h"
+#include "geometry/SingleShape.h"
 #include "utils/AABB.h"
 #include "utils/ExtrusionLine.h"
-#include "utils/polygon.h"
 
 
 namespace cura
@@ -22,27 +24,25 @@ namespace cura
  * Because support is handled as a whole in the engine, that is, we have a global support areas instead of support areas for each mesh.
  * With this data structure, we can keep track of which gradual support infill areas belongs to which support area, so we can print them together.
  */
-class SupportInfillPart
+struct SupportInfillPart
 {
-public:
-    PolygonsPart outline;  //!< The outline of the support infill area
-    AABB outline_boundary_box;  //!< The boundary box for the infill area
-    coord_t support_line_width;  //!< The support line width
-    int inset_count_to_generate;  //!< The number of insets need to be generated from the outline. This is not the actual insets that will be generated.
-    std::vector<std::vector<Polygons>> infill_area_per_combine_per_density;  //!< a list of separated sub-areas which requires different infill densities and combined thicknesses
-                                                                              //   for infill_areas[x][n], x means the density level and n means the thickness
-    std::vector<VariableWidthLines> wall_toolpaths; //!< Any walls go here, not in the areas, where they could be combined vertically (don't combine walls). Binned by inset_idx.
-size_t extruder_nr; // which extruder is used for this infill part?
-    SupportInfillPart(const PolygonsPart& outline, coord_t support_line_width, size_t extruder_nr, int inset_count_to_generate);
+    SingleShape outline_; //!< The outline of the support infill area
+    std::optional<Shape> base_outside_contour_; //!< Outline contour including the outer base
+    std::optional<Shape> base_inside_contour_; //!< If an inside base is generated, contains the inner contour
+    AABB outline_boundary_box_; //!< The boundary box for the infill area
+    coord_t support_line_width_; //!< The support line width
+    coord_t inset_width_to_generate_; //!< The width of insets need to be generated from the outline. This is not the actual insets that will be generated.
+    std::vector<std::vector<Shape>> infill_area_per_combine_per_density_; //!< a list of separated sub-areas which requires different infill densities and combined thicknesses
+                                                                          //   for infill_areas[x][n], x means the density level and n means the thickness
+    std::vector<VariableWidthLines> wall_toolpaths_; //!< Any walls go here, not in the areas, where they could be combined vertically (don't combine walls). Binned by inset_idx.
 
-    const Polygons& getInfillArea() const;
+    coord_t custom_line_distance_; //!< The distance between support infill lines. 0 means use the default line distance instead.
+    bool use_fractional_config_; //!< Request to use the configuration used to fill a partial layer height here, instead of the normal full layer height configuration.
+
+    SupportInfillPart(const SingleShape& outline, coord_t support_line_width, bool use_fractional_config, coord_t inset_width_to_generate = 0, coord_t custom_line_distance = 0);
+
+    const Shape& getInfillArea() const;
 };
-
-inline const Polygons& SupportInfillPart::getInfillArea() const
-{
-    // if there is no wall, we use the original outline as the infill area
-    return outline;
-}
 
 } // namespace cura
 

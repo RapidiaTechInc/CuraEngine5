@@ -1,22 +1,33 @@
-// Copyright (c) 2023 UltiMaker
+// Copyright (c) 2024 UltiMaker
 // CuraEngine is released under the terms of the AGPLv3 or higher
 
-#include <algorithm> // remove_if
-#include <stdio.h>
+#include "slicer.h"
 
+#include <algorithm> // remove_if
+#include <cstdio>
+#include <numbers>
+
+#include <fmt/chrono.h>
+#include <scripta/logger.h>
 #include <spdlog/spdlog.h>
 
 #include "Application.h"
 #include "Slice.h"
+#include "SlicedUVCoordinates.h"
+#include "geometry/OpenPolyline.h"
+#include "geometry/SingleShape.h" // Needed in order to call splitIntoParts()
+#include "plugins/slots.h"
+#include "raft.h"
 #include "settings/AdaptiveLayerHeights.h"
 #include "settings/EnumSettings.h"
 #include "settings/types/LayerIndex.h"
-#include "slicer.h"
+#include "utils/Point3D.h"
 #include "utils/Simplify.h"
 #include "utils/SparsePointGridInclusive.h"
 #include "utils/ThreadPool.h"
 #include "utils/gettime.h"
-
+#include "utils/polygonUtils.h"
+#include "utils/section_type.h"
 
 namespace cura
 {
@@ -25,57 +36,55 @@ constexpr int largest_neglected_gap_first_phase = MM2INT(0.01); //!< distance be
 constexpr int largest_neglected_gap_second_phase = MM2INT(0.02); //!< distance between two line segments regarded as connected
 constexpr int max_stitch1 = MM2INT(10.0); //!< maximal distance stitched between open polylines to form polygons
 
-void SlicerLayer::makeBasicPolygonLoops(Polygons& open_polylines)
+void SlicerLayer::makeBasicPolygonLoops(OpenLinesSet& open_polylines)
 {
-    for (size_t start_segment_idx = 0; start_segment_idx < segments.size(); start_segment_idx++)
+    for (size_t start_segment_idx = 0; start_segment_idx < segments_.size(); start_segment_idx++)
     {
-        if (! segments[start_segment_idx].addedToPolygon)
+        if (! segments_[start_segment_idx].addedToPolygon)
         {
             makeBasicPolygonLoop(open_polylines, start_segment_idx);
         }
     }
-    // Clear the segmentList to save memory, it is no longer needed after this point.
-    segments.clear();
 }
 
-void SlicerLayer::makeBasicPolygonLoop(Polygons& open_polylines, const size_t start_segment_idx)
+void SlicerLayer::makeBasicPolygonLoop(OpenLinesSet& open_polylines, const size_t start_segment_idx)
 {
-    Polygon poly;
-    poly.add(segments[start_segment_idx].start);
+    Polygon poly(true);
+    poly.push_back(segments_[start_segment_idx].start);
 
     for (int segment_idx = start_segment_idx; segment_idx != -1;)
     {
-        SlicerSegment& segment = segments[segment_idx];
-        poly.add(segment.end);
+        SlicerSegment& segment = segments_[segment_idx];
+        poly.push_back(segment.end);
         segment.addedToPolygon = true;
         segment_idx = getNextSegmentIdx(segment, start_segment_idx);
         if (segment_idx == static_cast<int>(start_segment_idx))
         { // polyon is closed
-            polygons.add(poly);
+            polygons_.push_back(std::move(poly));
             return;
         }
     }
     // polygon couldn't be closed
-    open_polylines.add(poly);
+    open_polylines.emplace_back(std::move(poly.getPoints()));
 }
 
 int SlicerLayer::tryFaceNextSegmentIdx(const SlicerSegment& segment, const int face_idx, const size_t start_segment_idx) const
 {
-    decltype(face_idx_to_segment_idx.begin()) it;
-    auto it_end = face_idx_to_segment_idx.end();
-    it = face_idx_to_segment_idx.find(face_idx);
+    decltype(face_idx_to_segment_idx_.begin()) it;
+    auto it_end = face_idx_to_segment_idx_.end();
+    it = face_idx_to_segment_idx_.find(face_idx);
     if (it != it_end)
     {
         const int segment_idx = (*it).second;
-        Point p1 = segments[segment_idx].start;
-        Point diff = segment.end - p1;
+        Point2LL p1 = segments_[segment_idx].start;
+        Point2LL diff = segment.end - p1;
         if (shorterThen(diff, largest_neglected_gap_first_phase))
         {
             if (segment_idx == static_cast<int>(start_segment_idx))
             {
                 return start_segment_idx;
             }
-            if (segments[segment_idx].addedToPolygon)
+            if (segments_[segment_idx].addedToPolygon)
             {
                 return -1;
             }
@@ -104,7 +113,7 @@ int SlicerLayer::getNextSegmentIdx(const SlicerSegment& segment, const size_t st
     {
         // segment ended at vertex
 
-        const std::vector<uint32_t>& faces_to_try = segment.endVertex->connected_faces;
+        const std::vector<uint32_t>& faces_to_try = segment.endVertex->connected_faces_;
         for (int face_to_try : faces_to_try)
         {
             const int result_segment_idx = tryFaceNextSegmentIdx(segment, face_to_try, start_segment_idx);
@@ -123,7 +132,7 @@ int SlicerLayer::getNextSegmentIdx(const SlicerSegment& segment, const size_t st
     return next_segment_idx;
 }
 
-void SlicerLayer::connectOpenPolylines(Polygons& open_polylines)
+void SlicerLayer::connectOpenPolylines(OpenLinesSet& open_polylines)
 {
     constexpr bool allow_reverse = false;
     // Search a bit fewer cells but at cost of covering more area.
@@ -132,7 +141,7 @@ void SlicerLayer::connectOpenPolylines(Polygons& open_polylines)
     connectOpenPolylinesImpl(open_polylines, largest_neglected_gap_second_phase, cell_size, allow_reverse);
 }
 
-void SlicerLayer::stitch(Polygons& open_polylines)
+void SlicerLayer::stitch(OpenLinesSet& open_polylines)
 {
     bool allow_reverse = true;
     connectOpenPolylinesImpl(open_polylines, max_stitch1, max_stitch1, allow_reverse);
@@ -184,7 +193,8 @@ bool SlicerLayer::PossibleStitch::operator<(const PossibleStitch& other) const
     return false;
 }
 
-std::priority_queue<SlicerLayer::PossibleStitch> SlicerLayer::findPossibleStitches(const Polygons& open_polylines, coord_t max_dist, coord_t cell_size, bool allow_reverse) const
+std::priority_queue<SlicerLayer::PossibleStitch>
+    SlicerLayer::findPossibleStitches(const OpenLinesSet& open_polylines, coord_t max_dist, coord_t cell_size, bool allow_reverse) const
 {
     std::priority_queue<PossibleStitch> stitch_queue;
 
@@ -197,12 +207,12 @@ std::priority_queue<SlicerLayer::PossibleStitch> SlicerLayer::findPossibleStitch
         unsigned int polyline_idx;
         // Depending on the SparsePointGridInclusive, either the start point or the
         // end point of the polyline
-        Point polyline_term_pt;
+        Point2LL polyline_term_pt;
     };
 
     struct StitchGridValLocator
     {
-        Point operator()(const StitchGridVal& val) const
+        Point2LL operator()(const StitchGridVal& val) const
         {
             return val.polyline_term_pt;
         }
@@ -219,7 +229,7 @@ std::priority_queue<SlicerLayer::PossibleStitch> SlicerLayer::findPossibleStitch
     //   insert the starts of the polylines).
     for (unsigned int polyline_0_idx = 0; polyline_0_idx < open_polylines.size(); polyline_0_idx++)
     {
-        ConstPolygonRef polyline_0 = open_polylines[polyline_0_idx];
+        const OpenPolyline& polyline_0 = open_polylines[polyline_0_idx];
 
         if (polyline_0.size() < 1)
             continue;
@@ -235,7 +245,7 @@ std::priority_queue<SlicerLayer::PossibleStitch> SlicerLayer::findPossibleStitch
     {
         for (unsigned int polyline_0_idx = 0; polyline_0_idx < open_polylines.size(); polyline_0_idx++)
         {
-            ConstPolygonRef polyline_0 = open_polylines[polyline_0_idx];
+            const OpenPolyline& polyline_0 = open_polylines[polyline_0_idx];
 
             if (polyline_0.size() < 1)
                 continue;
@@ -250,7 +260,7 @@ std::priority_queue<SlicerLayer::PossibleStitch> SlicerLayer::findPossibleStitch
     // search for nearby end points
     for (unsigned int polyline_1_idx = 0; polyline_1_idx < open_polylines.size(); polyline_1_idx++)
     {
-        ConstPolygonRef polyline_1 = open_polylines[polyline_1_idx];
+        const OpenPolyline& polyline_1 = open_polylines[polyline_1_idx];
 
         if (polyline_1.size() < 1)
             continue;
@@ -263,7 +273,7 @@ std::priority_queue<SlicerLayer::PossibleStitch> SlicerLayer::findPossibleStitch
         nearby_ends = grid_ends.getNearby(polyline_1[0], max_dist);
         for (const auto& nearby_end : nearby_ends)
         {
-            Point diff = nearby_end.polyline_term_pt - polyline_1[0];
+            Point2LL diff = nearby_end.polyline_term_pt - polyline_1[0];
             int64_t dist2 = vSize2(diff);
             if (dist2 < max_dist2)
             {
@@ -289,7 +299,7 @@ std::priority_queue<SlicerLayer::PossibleStitch> SlicerLayer::findPossibleStitch
                     continue;
                 }
 
-                Point diff = nearby_end.polyline_term_pt - polyline_1.back();
+                Point2LL diff = nearby_end.polyline_term_pt - polyline_1.back();
                 int64_t dist2 = vSize2(diff);
                 if (dist2 < max_dist2)
                 {
@@ -313,7 +323,7 @@ std::priority_queue<SlicerLayer::PossibleStitch> SlicerLayer::findPossibleStitch
                     continue;
                 }
 
-                Point diff = nearby_start.polyline_term_pt - polyline_1[0];
+                Point2LL diff = nearby_start.polyline_term_pt - polyline_1[0];
                 int64_t dist2 = vSize2(diff);
                 if (dist2 < max_dist2)
                 {
@@ -330,7 +340,7 @@ std::priority_queue<SlicerLayer::PossibleStitch> SlicerLayer::findPossibleStitch
     return stitch_queue;
 }
 
-void SlicerLayer::planPolylineStitch(const Polygons& open_polylines, Terminus& terminus_0, Terminus& terminus_1, bool reverse[2]) const
+void SlicerLayer::planPolylineStitch(const OpenLinesSet& open_polylines, Terminus& terminus_0, Terminus& terminus_1, bool reverse[2]) const
 {
     size_t polyline_0_idx = terminus_0.getPolylineIdx();
     size_t polyline_1_idx = terminus_1.getPolylineIdx();
@@ -379,7 +389,7 @@ void SlicerLayer::planPolylineStitch(const Polygons& open_polylines, Terminus& t
     }
 }
 
-void SlicerLayer::joinPolylines(PolygonRef& polyline_0, PolygonRef& polyline_1, const bool reverse[2]) const
+void SlicerLayer::joinPolylines(OpenPolyline& polyline_0, OpenPolyline& polyline_1, const bool reverse[2])
 {
     if (reverse[0])
     {
@@ -394,18 +404,19 @@ void SlicerLayer::joinPolylines(PolygonRef& polyline_0, PolygonRef& polyline_1, 
     {
         // reverse polyline_1 by adding in reverse order
         for (int poly_idx = polyline_1.size() - 1; poly_idx >= 0; poly_idx--)
-            polyline_0.add(polyline_1[poly_idx]);
+            polyline_0.push_back(polyline_1[poly_idx]);
     }
     else
     {
         // append polyline_1 onto polyline_0
-        for (Point& p : polyline_1)
-            polyline_0.add(p);
+        for (Point2LL& p : polyline_1)
+            polyline_0.push_back(p);
     }
     polyline_1.clear();
 }
 
-SlicerLayer::TerminusTrackingMap::TerminusTrackingMap(Terminus::Index end_idx) : m_terminus_old_to_cur_map(end_idx)
+SlicerLayer::TerminusTrackingMap::TerminusTrackingMap(Terminus::Index end_idx)
+    : m_terminus_old_to_cur_map(end_idx)
 {
     // Initialize map to everything points to itself since nothing has moved yet.
     for (size_t idx = 0U; idx != end_idx; ++idx)
@@ -415,7 +426,12 @@ SlicerLayer::TerminusTrackingMap::TerminusTrackingMap(Terminus::Index end_idx) :
     m_terminus_cur_to_old_map = m_terminus_old_to_cur_map;
 }
 
-void SlicerLayer::TerminusTrackingMap::updateMap(size_t num_terms, const Terminus* cur_terms, const Terminus* next_terms, size_t num_removed_terms, const Terminus* removed_cur_terms)
+void SlicerLayer::TerminusTrackingMap::updateMap(
+    size_t num_terms,
+    const Terminus* cur_terms,
+    const Terminus* next_terms,
+    size_t num_removed_terms,
+    const Terminus* removed_cur_terms)
 {
     // save old locations
     std::vector<Terminus> old_terms(num_terms);
@@ -440,7 +456,7 @@ void SlicerLayer::TerminusTrackingMap::updateMap(size_t num_terms, const Terminu
     }
 }
 
-void SlicerLayer::connectOpenPolylinesImpl(Polygons& open_polylines, coord_t max_dist, coord_t cell_size, bool allow_reverse)
+void SlicerLayer::connectOpenPolylinesImpl(OpenLinesSet& open_polylines, coord_t max_dist, coord_t cell_size, bool allow_reverse)
 {
     // below code closes smallest gaps first
 
@@ -480,9 +496,8 @@ void SlicerLayer::connectOpenPolylinesImpl(Polygons& open_polylines, coord_t max
         if (completed_poly)
         {
             // finished polygon
-            PolygonRef polyline_0 = open_polylines[best_polyline_0_idx];
-            polygons.add(polyline_0);
-            polyline_0.clear();
+            OpenPolyline& polyline_0 = open_polylines[best_polyline_0_idx];
+            polygons_.push_back(Polygon(std::move(polyline_0.getPoints()), true)); // Will also clear the polyline
             Terminus cur_terms[2] = { { best_polyline_0_idx, false }, { best_polyline_0_idx, true } };
             for (size_t idx = 0U; idx != 2U; ++idx)
             {
@@ -500,8 +515,8 @@ void SlicerLayer::connectOpenPolylinesImpl(Polygons& open_polylines, coord_t max
         // need to reread since planPolylineStitch can swap terminus_0/1
         best_polyline_0_idx = terminus_0.getPolylineIdx();
         best_polyline_1_idx = terminus_1.getPolylineIdx();
-        PolygonRef polyline_0 = open_polylines[best_polyline_0_idx];
-        PolygonRef polyline_1 = open_polylines[best_polyline_1_idx];
+        OpenPolyline& polyline_0 = open_polylines[best_polyline_0_idx];
+        OpenPolyline& polyline_1 = open_polylines[best_polyline_1_idx];
 
         // join polylines according to plan
         joinPolylines(polyline_0, polyline_1, reverse);
@@ -523,7 +538,7 @@ void SlicerLayer::connectOpenPolylinesImpl(Polygons& open_polylines, coord_t max
     }
 }
 
-void SlicerLayer::stitch_extensive(Polygons& open_polylines)
+void SlicerLayer::stitch_extensive(OpenLinesSet& open_polylines)
 {
     // For extensive stitching find 2 open polygons that are touching 2 closed polygons.
     //  Then find the shortest path over this polygon that can be used to connect the open polygons,
@@ -534,21 +549,17 @@ void SlicerLayer::stitch_extensive(Polygons& open_polylines)
     {
         unsigned int best_polyline_1_idx = -1;
         unsigned int best_polyline_2_idx = -1;
-        GapCloserResult best_result;
-        best_result.len = POINT_MAX;
-        best_result.polygonIdx = -1;
-        best_result.pointIdxA = -1;
-        best_result.pointIdxB = -1;
+        std::optional<GapCloserResult> best_result;
 
         for (unsigned int polyline_1_idx = 0; polyline_1_idx < open_polylines.size(); polyline_1_idx++)
         {
-            PolygonRef polyline_1 = open_polylines[polyline_1_idx];
+            OpenPolyline& polyline_1 = open_polylines[polyline_1_idx];
             if (polyline_1.size() < 1)
                 continue;
 
             {
-                GapCloserResult res = findPolygonGapCloser(polyline_1[0], polyline_1.back());
-                if (res.len > 0 && res.len < best_result.len)
+                std::optional<GapCloserResult> res = findPolygonGapCloser(polyline_1[0], polyline_1.back());
+                if (res && (! best_result || res->len < best_result->len))
                 {
                     best_polyline_1_idx = polyline_1_idx;
                     best_polyline_2_idx = polyline_1_idx;
@@ -558,12 +569,12 @@ void SlicerLayer::stitch_extensive(Polygons& open_polylines)
 
             for (unsigned int polyline_2_idx = 0; polyline_2_idx < open_polylines.size(); polyline_2_idx++)
             {
-                PolygonRef polyline_2 = open_polylines[polyline_2_idx];
+                OpenPolyline& polyline_2 = open_polylines[polyline_2_idx];
                 if (polyline_2.size() < 1 || polyline_1_idx == polyline_2_idx)
                     continue;
 
-                GapCloserResult res = findPolygonGapCloser(polyline_1[0], polyline_2.back());
-                if (res.len > 0 && res.len < best_result.len)
+                std::optional<GapCloserResult> res = findPolygonGapCloser(polyline_1[0], polyline_2.back());
+                if (res && (! best_result || res->len < best_result->len))
                 {
                     best_polyline_1_idx = polyline_1_idx;
                     best_polyline_2_idx = polyline_2_idx;
@@ -572,58 +583,58 @@ void SlicerLayer::stitch_extensive(Polygons& open_polylines)
             }
         }
 
-        if (best_result.len < POINT_MAX)
+        if (best_result)
         {
             if (best_polyline_1_idx == best_polyline_2_idx)
             {
-                if (best_result.pointIdxA == best_result.pointIdxB)
+                if (best_result->pointIdxA == best_result->pointIdxB)
                 {
-                    polygons.add(open_polylines[best_polyline_1_idx]);
+                    polygons_.push_back(Polygon(open_polylines[best_polyline_1_idx].getPoints(), true));
                     open_polylines[best_polyline_1_idx].clear();
                 }
-                else if (best_result.AtoB)
+                else if (best_result->AtoB)
                 {
-                    PolygonRef poly = polygons.newPoly();
-                    for (unsigned int j = best_result.pointIdxA; j != best_result.pointIdxB; j = (j + 1) % polygons[best_result.polygonIdx].size())
-                        poly.add(polygons[best_result.polygonIdx][j]);
+                    Polygon& poly = polygons_.newLine();
+                    for (unsigned int j = best_result->pointIdxA; j != best_result->pointIdxB; j = (j + 1) % polygons_[best_result->polygonIdx].size())
+                        poly.push_back(polygons_[best_result->polygonIdx][j]);
                     for (unsigned int j = open_polylines[best_polyline_1_idx].size() - 1; int(j) >= 0; j--)
-                        poly.add(open_polylines[best_polyline_1_idx][j]);
+                        poly.push_back(open_polylines[best_polyline_1_idx][j]);
                     open_polylines[best_polyline_1_idx].clear();
                 }
                 else
                 {
-                    unsigned int n = polygons.size();
-                    polygons.add(open_polylines[best_polyline_1_idx]);
-                    for (unsigned int j = best_result.pointIdxB; j != best_result.pointIdxA; j = (j + 1) % polygons[best_result.polygonIdx].size())
-                        polygons[n].add(polygons[best_result.polygonIdx][j]);
+                    unsigned int n = polygons_.size();
+                    polygons_.push_back(Polygon(open_polylines[best_polyline_1_idx].getPoints(), true));
+                    for (unsigned int j = best_result->pointIdxB; j != best_result->pointIdxA; j = (j + 1) % polygons_[best_result->polygonIdx].size())
+                        polygons_[n].push_back(polygons_[best_result->polygonIdx][j]);
                     open_polylines[best_polyline_1_idx].clear();
                 }
             }
             else
             {
-                if (best_result.pointIdxA == best_result.pointIdxB)
+                if (best_result->pointIdxA == best_result->pointIdxB)
                 {
                     for (unsigned int n = 0; n < open_polylines[best_polyline_1_idx].size(); n++)
-                        open_polylines[best_polyline_2_idx].add(open_polylines[best_polyline_1_idx][n]);
+                        open_polylines[best_polyline_2_idx].push_back(open_polylines[best_polyline_1_idx][n]);
                     open_polylines[best_polyline_1_idx].clear();
                 }
-                else if (best_result.AtoB)
+                else if (best_result->AtoB)
                 {
                     Polygon poly;
-                    for (unsigned int n = best_result.pointIdxA; n != best_result.pointIdxB; n = (n + 1) % polygons[best_result.polygonIdx].size())
-                        poly.add(polygons[best_result.polygonIdx][n]);
+                    for (unsigned int n = best_result->pointIdxA; n != best_result->pointIdxB; n = (n + 1) % polygons_[best_result->polygonIdx].size())
+                        poly.push_back(polygons_[best_result->polygonIdx][n]);
                     for (unsigned int n = poly.size() - 1; int(n) >= 0; n--)
-                        open_polylines[best_polyline_2_idx].add(poly[n]);
+                        open_polylines[best_polyline_2_idx].push_back(poly[n]);
                     for (unsigned int n = 0; n < open_polylines[best_polyline_1_idx].size(); n++)
-                        open_polylines[best_polyline_2_idx].add(open_polylines[best_polyline_1_idx][n]);
+                        open_polylines[best_polyline_2_idx].push_back(open_polylines[best_polyline_1_idx][n]);
                     open_polylines[best_polyline_1_idx].clear();
                 }
                 else
                 {
-                    for (unsigned int n = best_result.pointIdxB; n != best_result.pointIdxA; n = (n + 1) % polygons[best_result.polygonIdx].size())
-                        open_polylines[best_polyline_2_idx].add(polygons[best_result.polygonIdx][n]);
+                    for (unsigned int n = best_result->pointIdxB; n != best_result->pointIdxA; n = (n + 1) % polygons_[best_result->polygonIdx].size())
+                        open_polylines[best_polyline_2_idx].push_back(polygons_[best_result->polygonIdx][n]);
                     for (unsigned int n = open_polylines[best_polyline_1_idx].size() - 1; int(n) >= 0; n--)
-                        open_polylines[best_polyline_2_idx].add(open_polylines[best_polyline_1_idx][n]);
+                        open_polylines[best_polyline_2_idx].push_back(open_polylines[best_polyline_1_idx][n]);
                     open_polylines[best_polyline_1_idx].clear();
                 }
             }
@@ -635,19 +646,19 @@ void SlicerLayer::stitch_extensive(Polygons& open_polylines)
     }
 }
 
-GapCloserResult SlicerLayer::findPolygonGapCloser(Point ip0, Point ip1)
+std::optional<GapCloserResult> SlicerLayer::findPolygonGapCloser(Point2LL ip0, Point2LL ip1)
 {
-    GapCloserResult ret;
-    ClosePolygonResult c1 = findPolygonPointClosestTo(ip0);
-    ClosePolygonResult c2 = findPolygonPointClosestTo(ip1);
-    if (c1.polygonIdx < 0 || c1.polygonIdx != c2.polygonIdx)
+    std::optional<ClosePolygonResult> c1 = findPolygonPointClosestTo(ip0);
+    std::optional<ClosePolygonResult> c2 = findPolygonPointClosestTo(ip1);
+    if (! c1 || ! c2 || c1->polygonIdx != c2->polygonIdx)
     {
-        ret.len = -1;
-        return ret;
+        return std::nullopt;
     }
-    ret.polygonIdx = c1.polygonIdx;
-    ret.pointIdxA = c1.pointIdx;
-    ret.pointIdxB = c2.pointIdx;
+
+    GapCloserResult ret;
+    ret.polygonIdx = c1->polygonIdx;
+    ret.pointIdxA = c1->pointIdx;
+    ret.pointIdxB = c2->pointIdx;
     ret.AtoB = true;
 
     if (ret.pointIdxA == ret.pointIdxB)
@@ -658,21 +669,21 @@ GapCloserResult SlicerLayer::findPolygonGapCloser(Point ip0, Point ip1)
     else
     {
         // Find out if we have should go from A to B or the other way around.
-        Point p0 = polygons[ret.polygonIdx][ret.pointIdxA];
+        Point2LL p0 = polygons_[ret.polygonIdx][ret.pointIdxA];
         int64_t lenA = vSize(p0 - ip0);
-        for (unsigned int i = ret.pointIdxA; i != ret.pointIdxB; i = (i + 1) % polygons[ret.polygonIdx].size())
+        for (unsigned int i = ret.pointIdxA; i != ret.pointIdxB; i = (i + 1) % polygons_[ret.polygonIdx].size())
         {
-            Point p1 = polygons[ret.polygonIdx][i];
+            Point2LL p1 = polygons_[ret.polygonIdx][i];
             lenA += vSize(p0 - p1);
             p0 = p1;
         }
         lenA += vSize(p0 - ip1);
 
-        p0 = polygons[ret.polygonIdx][ret.pointIdxB];
+        p0 = polygons_[ret.polygonIdx][ret.pointIdxB];
         int64_t lenB = vSize(p0 - ip1);
-        for (unsigned int i = ret.pointIdxB; i != ret.pointIdxA; i = (i + 1) % polygons[ret.polygonIdx].size())
+        for (unsigned int i = ret.pointIdxB; i != ret.pointIdxA; i = (i + 1) % polygons_[ret.polygonIdx].size())
         {
-            Point p1 = polygons[ret.polygonIdx][i];
+            Point2LL p1 = polygons_[ret.polygonIdx][i];
             lenB += vSize(p0 - p1);
             p0 = p1;
         }
@@ -692,27 +703,27 @@ GapCloserResult SlicerLayer::findPolygonGapCloser(Point ip0, Point ip1)
     return ret;
 }
 
-ClosePolygonResult SlicerLayer::findPolygonPointClosestTo(Point input)
+std::optional<ClosePolygonResult> SlicerLayer::findPolygonPointClosestTo(Point2LL input)
 {
-    ClosePolygonResult ret;
-    for (unsigned int n = 0; n < polygons.size(); n++)
+    for (size_t n = 0; n < polygons_.size(); n++)
     {
-        Point p0 = polygons[n][polygons[n].size() - 1];
-        for (unsigned int i = 0; i < polygons[n].size(); i++)
+        Point2LL p0 = polygons_[n][polygons_[n].size() - 1];
+        for (size_t i = 0; i < polygons_[n].size(); i++)
         {
-            Point p1 = polygons[n][i];
+            Point2LL p1 = polygons_[n][i];
 
             // Q = A + Normal( B - A ) * ((( B - A ) dot ( P - A )) / VSize( A - B ));
-            Point pDiff = p1 - p0;
+            Point2LL pDiff = p1 - p0;
             int64_t lineLength = vSize(pDiff);
             if (lineLength > 1)
             {
                 int64_t distOnLine = dot(pDiff, input - p0) / lineLength;
                 if (distOnLine >= 0 && distOnLine <= lineLength)
                 {
-                    Point q = p0 + pDiff * distOnLine / lineLength;
+                    Point2LL q = p0 + pDiff * distOnLine / lineLength;
                     if (shorterThen(q - input, MM2INT(0.1)))
                     {
+                        ClosePolygonResult ret;
                         ret.polygonIdx = n;
                         ret.pointIdx = i;
                         return ret;
@@ -722,247 +733,286 @@ ClosePolygonResult SlicerLayer::findPolygonPointClosestTo(Point input)
             p0 = p1;
         }
     }
-    ret.polygonIdx = -1;
-    return ret;
+
+    return std::nullopt;
 }
 
 void SlicerLayer::makePolygons(const Mesh* mesh)
 {
-    Polygons open_polylines;
+    OpenLinesSet open_polylines;
 
     makeBasicPolygonLoops(open_polylines);
 
     connectOpenPolylines(open_polylines);
 
-    // TODO: (?) for mesh surface mode: connect open polygons. Maybe the above algorithm can create two open polygons which are actually connected when the starting segment is in the middle between the two open polygons.
+    // TODO: (?) for mesh surface mode: connect open polygons. Maybe the above algorithm can create two open polygons which are actually connected when the starting segment is in
+    // the middle between the two open polygons.
 
-    if (mesh->settings.get<ESurfaceMode>("magic_mesh_surface_mode") == ESurfaceMode::NORMAL)
-    { // don't stitch when using (any) mesh surface mode, i.e. also don't stitch when using mixed mesh surface and closed polygons, because then polylines which are supposed to be open will be closed
+    if (mesh->settings_.get<ESurfaceMode>("magic_mesh_surface_mode") == ESurfaceMode::NORMAL)
+    { // don't stitch when using (any) mesh surface mode, i.e. also don't stitch when using mixed mesh surface and closed polygons, because then polylines which are supposed to be
+      // open will be closed
         stitch(open_polylines);
     }
 
-    if (mesh->settings.get<bool>("meshfix_extensive_stitching"))
+    if (mesh->settings_.get<bool>("meshfix_extensive_stitching"))
     {
         stitch_extensive(open_polylines);
     }
 
-    if (mesh->settings.get<bool>("meshfix_keep_open_polygons"))
+    if (mesh->settings_.get<bool>("meshfix_keep_open_polygons"))
     {
-        for (PolygonRef polyline : open_polylines)
+        for (const OpenPolyline& polyline : open_polylines)
         {
-            if (polyline.size() > 0)
-                polygons.add(polyline);
+            polygons_.push_back(Polygon(polyline.getPoints(), false), CheckNonEmptyParam::OnlyIfNotEmpty);
         }
     }
 
-    for (PolygonRef polyline : open_polylines)
+    for (const OpenPolyline& polyline : open_polylines)
     {
-        if (polyline.size() > 0)
-        {
-            openPolylines.add(polyline);
-        }
+        open_polylines_.push_back(std::move(polyline), CheckNonEmptyParam::OnlyIfNotEmpty);
     }
 
     // Remove all the tiny polygons, or polygons that are not closed. As they do not contribute to the actual print.
-    const coord_t snap_distance = std::max(mesh->settings.get<coord_t>("minimum_polygon_circumference"), static_cast<coord_t>(1));
-    auto it = std::remove_if(polygons.begin(), polygons.end(), [snap_distance](PolygonRef poly) { return poly.shorterThan(snap_distance); });
-    polygons.erase(it, polygons.end());
+    const coord_t snap_distance = std::max(mesh->settings_.get<coord_t>("minimum_polygon_circumference"), static_cast<coord_t>(1));
+    auto itPolygons = std::remove_if(
+        polygons_.begin(),
+        polygons_.end(),
+        [snap_distance](const Polygon& poly)
+        {
+            return poly.shorterThan(snap_distance);
+        });
+    polygons_.erase(itPolygons, polygons_.end());
 
     // Finally optimize all the polygons. Every point removed saves time in the long run.
-    polygons = Simplify(mesh->settings).polygon(polygons);
-
-    polygons.removeDegenerateVerts(); // remove verts connected to overlapping line segments
+    polygons_ = Simplify(mesh->settings_).polygon(polygons_);
+    polygons_.removeDegenerateVerts(); // remove verts connected to overlapping line segments
 
     // Clean up polylines for Surface Mode printing
-    it = std::remove_if(openPolylines.begin(), openPolylines.end(), [snap_distance](PolygonRef poly) { return poly.shorterThan(snap_distance); });
-    openPolylines.erase(it, openPolylines.end());
+    auto itPolylines = std::remove_if(
+        open_polylines_.begin(),
+        open_polylines_.end(),
+        [snap_distance](const OpenPolyline& line)
+        {
+            return line.shorterThan(snap_distance);
+        });
+    open_polylines_.erase(itPolylines, open_polylines_.end());
 
-    openPolylines.removeDegenerateVertsPolyline();
+    open_polylines_.removeDegenerateVerts();
+
+    sliced_uv_coordinates_ = std::make_shared<SlicedUVCoordinates>(segments_);
+
+    // Clear the segment list to save memory, it is no longer needed after this point.
+    segments_.clear();
 }
 
-Slicer::Slicer(Mesh* i_mesh, const coord_t thickness, const size_t slice_layer_count, bool use_variable_layer_heights, std::vector<AdaptiveLayer>* adaptive_layers) : mesh(i_mesh)
+Slicer::Slicer(
+    Mesh* i_mesh,
+    const coord_t thickness,
+    const size_t slice_layer_count,
+    bool use_variable_layer_heights,
+    std::vector<AdaptiveLayer>* adaptive_layers,
+    const SlicingTolerance slicing_tolerance,
+    const coord_t initial_layer_thickness)
+    : mesh(i_mesh)
 {
-    const SlicingTolerance slicing_tolerance = mesh->settings.get<SlicingTolerance>("slicing_tolerance");
-    const coord_t initial_layer_thickness = Application::getInstance().current_slice->scene.current_mesh_group->settings.get<coord_t>("layer_height_0");
-
     assert(slice_layer_count > 0);
 
     TimeKeeper slice_timer;
 
     layers = buildLayersWithHeight(slice_layer_count, slicing_tolerance, initial_layer_thickness, thickness, use_variable_layer_heights, adaptive_layers);
-
+    scripta::setAll(
+        layers,
+        static_cast<int>(mesh->settings_.get<EPlatformAdhesion>("adhesion_type")),
+        mesh->settings_.get<int>("raft_surface_layers"),
+        mesh->settings_.get<coord_t>("raft_surface_thickness"),
+        mesh->settings_.get<int>("raft_interface_layers"),
+        mesh->settings_.get<coord_t>("raft_interface_thickness"),
+        mesh->settings_.get<coord_t>("raft_base_thickness"),
+        mesh->settings_.get<coord_t>("raft_airgap"),
+        mesh->settings_.get<coord_t>("layer_0_z_overlap"),
+        Raft::getFillerLayerCount());
 
     std::vector<std::pair<int32_t, int32_t>> zbbox = buildZHeightsForFaces(*mesh);
 
     buildSegments(*mesh, zbbox, slicing_tolerance, layers);
 
-    spdlog::info("Slice of mesh took {:3} seconds", slice_timer.restart());
+    spdlog::info("Slice of mesh took {}", std::chrono::duration<double>(slice_timer.restart()));
 
     makePolygons(*i_mesh, slicing_tolerance, layers);
-    spdlog::info("Make polygons took {:3} seconds", slice_timer.restart());
+    scripta::log("sliced_polygons", layers, SectionType::NA);
+    spdlog::info("Make polygons took {}", std::chrono::duration<double>(slice_timer.restart()));
 }
 
 void Slicer::buildSegments(const Mesh& mesh, const std::vector<std::pair<int32_t, int32_t>>& zbbox, const SlicingTolerance& slicing_tolerance, std::vector<SlicerLayer>& layers)
 {
-    cura::parallel_for(layers,
-                       [&](auto layer_it)
-                       {
-                           SlicerLayer& layer = *layer_it;
-                           const int32_t& z = layer.z;
-                           layer.segments.reserve(100);
+    cura::parallel_for(
+        layers,
+        [&](auto layer_it)
+        {
+            SlicerLayer& layer = *layer_it;
+            const int32_t& z = layer.z_;
+            layer.segments_.reserve(100);
 
-                           // loop over all mesh faces
-                           for (unsigned int mesh_idx = 0; mesh_idx < mesh.faces.size(); mesh_idx++)
-                           {
-                               if ((z < zbbox[mesh_idx].first) || (z > zbbox[mesh_idx].second))
-                               {
-                                   continue;
-                               }
+            // loop over all mesh faces
+            for (unsigned int face_idx = 0; face_idx < mesh.faces_.size(); face_idx++)
+            {
+                if ((z < zbbox[face_idx].first) || (z > zbbox[face_idx].second))
+                {
+                    continue;
+                }
 
-                               // get all vertices per face
-                               const MeshFace& face = mesh.faces[mesh_idx];
-                               const MeshVertex& v0 = mesh.vertices[face.vertex_index[0]];
-                               const MeshVertex& v1 = mesh.vertices[face.vertex_index[1]];
-                               const MeshVertex& v2 = mesh.vertices[face.vertex_index[2]];
+                // get all vertices per face
+                const MeshFace& face = mesh.faces_[face_idx];
+                const MeshVertex& v0 = mesh.vertices_[face.vertex_index_[0]];
+                const MeshVertex& v1 = mesh.vertices_[face.vertex_index_[1]];
+                const MeshVertex& v2 = mesh.vertices_[face.vertex_index_[2]];
+                const std::optional<Point2F> uv0 = face.uv_coordinates_[0];
+                const std::optional<Point2F> uv1 = face.uv_coordinates_[1];
+                const std::optional<Point2F> uv2 = face.uv_coordinates_[2];
 
-                               // get all vertices represented as 3D point
-                               Point3 p0 = v0.p;
-                               Point3 p1 = v1.p;
-                               Point3 p2 = v2.p;
+                // get all vertices represented as 3D point
+                Point3LL p0 = v0.p_;
+                Point3LL p1 = v1.p_;
+                Point3LL p2 = v2.p_;
 
-                               // Compensate for points exactly on the slice-boundary, except for 'inclusive', which already handles this correctly.
-                               if (slicing_tolerance != SlicingTolerance::INCLUSIVE)
-                               {
-                                   p0.z += static_cast<int>(p0.z == z) * -static_cast<int>(p0.z < 1);
-                                   p1.z += static_cast<int>(p1.z == z) * -static_cast<int>(p1.z < 1);
-                                   p2.z += static_cast<int>(p2.z == z) * -static_cast<int>(p2.z < 1);
-                               }
+                // Compensate for points exactly on the slice-boundary, except for 'inclusive', which already handles this correctly.
+                if (slicing_tolerance != SlicingTolerance::INCLUSIVE)
+                {
+                    p0.z_ += static_cast<int>(p0.z_ == z) * -static_cast<int>(p0.z_ < 1);
+                    p1.z_ += static_cast<int>(p1.z_ == z) * -static_cast<int>(p1.z_ < 1);
+                    p2.z_ += static_cast<int>(p2.z_ == z) * -static_cast<int>(p2.z_ < 1);
+                }
 
-                               SlicerSegment s;
-                               s.endVertex = nullptr;
-                               int end_edge_idx = -1;
+                SlicerSegment s;
+                s.endVertex = nullptr;
+                int end_edge_idx = -1;
 
-                               /*
-                               Now see if the triangle intersects the layer, and if so, where.
+                /*
+                Now see if the triangle intersects the layer, and if so, where.
 
-                               Edge cases are important here:
-                               - If all three vertices of the triangle are exactly on the layer,
-                                 don't count the triangle at all, because if the model is
-                                 watertight, there will be adjacent triangles on all 3 sides that
-                                 are not flat on the layer.
-                               - If two of the vertices are exactly on the layer, only count the
-                                 triangle if the last vertex is going up. We can't count both
-                                 upwards and downwards triangles here, because if the model is
-                                 manifold there will always be an adjacent triangle that is going
-                                 the other way and you'd get double edges. You would also get one
-                                 layer too many if the total model height is an exact multiple of
-                                 the layer thickness. Between going up and going down, we need to
-                                 choose the triangles going up, because otherwise the first layer
-                                 of where the model starts will be empty and the model will float
-                                 in mid-air. We'd much rather let the last layer be empty in that
-                                 case.
-                               - If only one of the vertices is exactly on the layer, the
-                                 intersection between the triangle and the plane would be a point.
-                                 We can't print points and with a manifold model there would be
-                                 line segments adjacent to the point on both sides anyway, so we
-                                 need to discard this 0-length line segment then.
-                               - Vertices in ccw order if look from outside.
-                               */
+                Edge cases are important here:
+                - If all three vertices of the triangle are exactly on the layer,
+                  don't count the triangle at all, because if the model is
+                  watertight, there will be adjacent triangles on all 3 sides that
+                  are not flat on the layer.
+                - If two of the vertices are exactly on the layer, only count the
+                  triangle if the last vertex is going up. We can't count both
+                  upwards and downwards triangles here, because if the model is
+                  manifold there will always be an adjacent triangle that is going
+                  the other way and you'd get double edges. You would also get one
+                  layer too many if the total model height is an exact multiple of
+                  the layer thickness. Between going up and going down, we need to
+                  choose the triangles going up, because otherwise the first layer
+                  of where the model starts will be empty and the model will float
+                  in mid-air. We'd much rather let the last layer be empty in that
+                  case.
+                - If only one of the vertices is exactly on the layer, the
+                  intersection between the triangle and the plane would be a point.
+                  We can't print points and with a manifold model there would be
+                  line segments adjacent to the point on both sides anyway, so we
+                  need to discard this 0-length line segment then.
+                - Vertices in ccw order if look from outside.
+                */
 
-                               if (p0.z < z && p1.z > z && p2.z > z) //  1_______2
-                               { //   \     /
-                                   s = project2D(p0, p2, p1, z); //------------- z
-                                   end_edge_idx = 0; //     \ /
-                               } //      0
+                if (p0.z_ < z && p1.z_ > z && p2.z_ > z) //  1_______2
+                { //   \     /
+                    s = project2D(p0, p2, p1, uv0, uv2, uv1, z); //------------- z
+                    end_edge_idx = 0; //     \ /
+                } //      0
 
-                               else if (p0.z > z && p1.z <= z && p2.z <= z) //      0
-                               { //     / \      .
-                                   s = project2D(p0, p1, p2, z); //------------- z
-                                   end_edge_idx = 2; //   /     \    .
-                                   if (p2.z == z) //  1_______2
-                                   {
-                                       s.endVertex = &v2;
-                                   }
-                               }
+                else if (p0.z_ > z && p1.z_ <= z && p2.z_ <= z) //      0
+                { //     / \      .
+                    s = project2D(p0, p1, p2, uv0, uv1, uv2, z); //------------- z
+                    end_edge_idx = 2; //   /     \    .
+                    if (p2.z_ == z) //  1_______2
+                    {
+                        s.endVertex = &v2;
+                    }
+                }
 
-                               else if (p1.z < z && p0.z > z && p2.z > z) //  0_______2
-                               { //   \     /
-                                   s = project2D(p1, p0, p2, z); //------------- z
-                                   end_edge_idx = 1; //     \ /
-                               } //      1
+                else if (p1.z_ < z && p0.z_ > z && p2.z_ > z) //  0_______2
+                { //   \     /
+                    s = project2D(p1, p0, p2, uv1, uv0, uv2, z); //------------- z
+                    end_edge_idx = 1; //     \ /
+                } //      1
 
-                               else if (p1.z > z && p0.z <= z && p2.z <= z) //      1
-                               { //     / \      .
-                                   s = project2D(p1, p2, p0, z); //------------- z
-                                   end_edge_idx = 0; //   /     \    .
-                                   if (p0.z == z) //  0_______2
-                                   {
-                                       s.endVertex = &v0;
-                                   }
-                               }
+                else if (p1.z_ > z && p0.z_ <= z && p2.z_ <= z) //      1
+                { //     / \      .
+                    s = project2D(p1, p2, p0, uv1, uv2, uv0, z); //------------- z
+                    end_edge_idx = 0; //   /     \    .
+                    if (p0.z_ == z) //  0_______2
+                    {
+                        s.endVertex = &v0;
+                    }
+                }
 
-                               else if (p2.z < z && p1.z > z && p0.z > z) //  0_______1
-                               { //   \     /
-                                   s = project2D(p2, p1, p0, z); //------------- z
-                                   end_edge_idx = 2; //     \ /
-                               } //      2
+                else if (p2.z_ < z && p1.z_ > z && p0.z_ > z) //  0_______1
+                { //   \     /
+                    s = project2D(p2, p1, p0, uv2, uv1, uv0, z); //------------- z
+                    end_edge_idx = 2; //     \ /
+                } //      2
 
-                               else if (p2.z > z && p1.z <= z && p0.z <= z) //      2
-                               { //     / \      .
-                                   s = project2D(p2, p0, p1, z); //------------- z
-                                   end_edge_idx = 1; //   /     \    .
-                                   if (p1.z == z) //  0_______1
-                                   {
-                                       s.endVertex = &v1;
-                                   }
-                               }
-                               else
-                               {
-                                   // Not all cases create a segment, because a point of a face could create just a dot, and two touching faces
-                                   //   on the slice would create two segments
-                                   continue;
-                               }
+                else if (p2.z_ > z && p1.z_ <= z && p0.z_ <= z) //      2
+                { //     / \      .
+                    s = project2D(p2, p0, p1, uv2, uv0, uv1, z); //------------- z
+                    end_edge_idx = 1; //   /     \    .
+                    if (p1.z_ == z) //  0_______1
+                    {
+                        s.endVertex = &v1;
+                    }
+                }
+                else
+                {
+                    // Not all cases create a segment, because a point of a face could create just a dot, and two touching faces
+                    //   on the slice would create two segments
+                    continue;
+                }
 
-                               // store the segments per layer
-                               layer.face_idx_to_segment_idx.insert(std::make_pair(mesh_idx, layer.segments.size()));
-                               s.faceIndex = mesh_idx;
-                               s.endOtherFaceIdx = face.connected_face_index[end_edge_idx];
-                               s.addedToPolygon = false;
-                               layer.segments.push_back(s);
-                           }
-                       });
+                // store the segments per layer
+                layer.face_idx_to_segment_idx_.insert(std::make_pair(face_idx, layer.segments_.size()));
+                s.faceIndex = face_idx;
+                s.endOtherFaceIdx = face.connected_face_index_[end_edge_idx];
+                s.addedToPolygon = false;
+                layer.segments_.push_back(s);
+            }
+        });
 }
 
-std::vector<SlicerLayer>
-    Slicer::buildLayersWithHeight(size_t slice_layer_count, SlicingTolerance slicing_tolerance, coord_t initial_layer_thickness, coord_t thickness, bool use_variable_layer_heights, const std::vector<AdaptiveLayer>* adaptive_layers)
+std::vector<SlicerLayer> Slicer::buildLayersWithHeight(
+    size_t slice_layer_count,
+    SlicingTolerance slicing_tolerance,
+    coord_t initial_layer_thickness,
+    coord_t thickness,
+    bool use_variable_layer_heights,
+    const std::vector<AdaptiveLayer>* adaptive_layers)
 {
     std::vector<SlicerLayer> layers_res;
 
     layers_res.resize(slice_layer_count);
 
     // set (and initialize compensation for) initial layer, depending on slicing mode
-    layers_res[0].z = slicing_tolerance == SlicingTolerance::INCLUSIVE ? 0 : std::max(0LL, initial_layer_thickness - thickness);
+    layers_res[0].z_ = slicing_tolerance == SlicingTolerance::INCLUSIVE ? 0 : std::max(0LL, initial_layer_thickness - thickness);
     coord_t adjusted_layer_offset = initial_layer_thickness;
     if (use_variable_layer_heights)
     {
-        layers_res[0].z = (*adaptive_layers)[0].z_position;
+        layers_res[0].z_ = (*adaptive_layers)[0].z_position_;
     }
     else if (slicing_tolerance == SlicingTolerance::MIDDLE)
     {
-        layers_res[0].z = initial_layer_thickness / 2;
+        layers_res[0].z_ = initial_layer_thickness / 2;
         adjusted_layer_offset = initial_layer_thickness + (thickness / 2);
     }
 
     // define all layer z positions (depending on slicing mode, see above)
-    for (unsigned int layer_nr = 1; layer_nr < slice_layer_count; layer_nr++)
+    for (LayerIndex layer_nr = 1; layer_nr < slice_layer_count; layer_nr++)
     {
         if (use_variable_layer_heights)
         {
-            layers_res[layer_nr].z = (*adaptive_layers)[layer_nr].z_position;
+            layers_res[layer_nr].z_ = (*adaptive_layers)[layer_nr].z_position_;
         }
         else
         {
-            layers_res[layer_nr].z = adjusted_layer_offset + (thickness * (layer_nr - 1));
+            layers_res[layer_nr].z_ = adjusted_layer_offset + (thickness * (layer_nr - 1));
         }
     }
 
@@ -971,22 +1021,27 @@ std::vector<SlicerLayer>
 
 void Slicer::makePolygons(Mesh& mesh, SlicingTolerance slicing_tolerance, std::vector<SlicerLayer>& layers)
 {
-    cura::parallel_for(layers, [&mesh](auto layer_it) { layer_it->makePolygons(&mesh); });
+    cura::parallel_for(
+        layers,
+        [&mesh](auto layer_it)
+        {
+            layer_it->makePolygons(&mesh);
+        });
 
     switch (slicing_tolerance)
     {
     case SlicingTolerance::INCLUSIVE:
-        for (unsigned int layer_nr = 0; layer_nr + 1 < layers.size(); layer_nr++)
+        for (size_t layer_nr = 0; layer_nr + 1 < layers.size(); layer_nr++)
         {
-            layers[layer_nr].polygons = layers[layer_nr].polygons.unionPolygons(layers[layer_nr + 1].polygons);
+            layers[layer_nr].polygons_ = layers[layer_nr].polygons_.unionPolygons(layers[layer_nr + 1].polygons_);
         }
         break;
     case SlicingTolerance::EXCLUSIVE:
-        for (unsigned int layer_nr = 0; layer_nr + 1 < layers.size(); layer_nr++)
+        for (size_t layer_nr = 0; layer_nr + 1 < layers.size(); layer_nr++)
         {
-            layers[layer_nr].polygons = layers[layer_nr].polygons.intersection(layers[layer_nr + 1].polygons);
+            layers[layer_nr].polygons_ = layers[layer_nr].polygons_.intersection(layers[layer_nr + 1].polygons_);
         }
-        layers.back().polygons.clear();
+        layers.back().polygons_.clear();
         break;
     case SlicingTolerance::MIDDLE:
     default:
@@ -995,50 +1050,69 @@ void Slicer::makePolygons(Mesh& mesh, SlicingTolerance slicing_tolerance, std::v
     }
 
     size_t layer_apply_initial_xy_offset = 0;
-    if (layers.size() > 0 && layers[0].polygons.size() == 0 && ! mesh.settings.get<bool>("support_mesh") && ! mesh.settings.get<bool>("anti_overhang_mesh") && ! mesh.settings.get<bool>("support_modifier_mesh")
-        && ! mesh.settings.get<bool>("cutting_mesh") && ! mesh.settings.get<bool>("infill_mesh"))
+    if (layers.size() > 0 && layers[0].polygons_.size() == 0 && ! mesh.settings_.get<bool>("support_mesh") && mesh.isModelMesh())
     {
         layer_apply_initial_xy_offset = 1;
     }
 
 
-    const coord_t xy_offset = mesh.settings.get<coord_t>("xy_offset");
-    const coord_t xy_offset_0 = mesh.settings.get<coord_t>("xy_offset_layer_0");
-    const coord_t xy_offset_hole = mesh.settings.get<coord_t>("hole_xy_offset");
-    cura::parallel_for<size_t>(0,
-                               layers.size(),
-                               [&layers, layer_apply_initial_xy_offset, xy_offset, xy_offset_0, xy_offset_hole](size_t layer_nr)
-                               {
-                                   const coord_t xy_offset_local = (layer_nr <= layer_apply_initial_xy_offset) ? xy_offset_0 : xy_offset;
-                                   if (xy_offset_local != 0)
-                                   {
-                                       layers[layer_nr].polygons = layers[layer_nr].polygons.offset(xy_offset_local, ClipperLib::JoinType::jtRound);
-                                   }
-                                   if (xy_offset_hole != 0)
-                                   {
-                                       auto parts = layers[layer_nr].polygons.splitIntoParts();
-                                       layers[layer_nr].polygons.clear();
+    const coord_t xy_offset = mesh.settings_.get<coord_t>("xy_offset");
+    const coord_t xy_offset_0 = mesh.settings_.get<coord_t>("xy_offset_layer_0");
+    const coord_t xy_offset_hole = mesh.settings_.get<coord_t>("hole_xy_offset");
+    const coord_t hole_offset_max_diameter = mesh.settings_.get<coord_t>("hole_xy_offset_max_diameter");
 
-                                       for (auto& part : parts)
-                                       {
-                                           Polygons holes;
-                                           Polygons outline;
-                                           for (const PolygonRef poly : part)
-                                           {
-                                               if (poly.orientation())
-                                               {
-                                                   outline.add(poly);
-                                               }
-                                               else
-                                               {
-                                                   holes.add(poly.offset(xy_offset_hole));
-                                               }
-                                           }
+    const auto max_hole_area = std::numbers::pi / 4 * static_cast<double>(hole_offset_max_diameter * hole_offset_max_diameter);
 
-                                           layers[layer_nr].polygons.add(outline.difference(holes.unionPolygons()));
-                                       }
-                                   }
-                               });
+    cura::parallel_for<size_t>(
+        0,
+        layers.size(),
+        [&layers, layer_apply_initial_xy_offset, xy_offset, xy_offset_0, xy_offset_hole, hole_offset_max_diameter, max_hole_area](size_t layer_nr)
+        {
+            const auto xy_offset_local = (layer_nr <= layer_apply_initial_xy_offset) ? xy_offset_0 : xy_offset;
+            if (xy_offset_local != 0)
+            {
+                layers[layer_nr].polygons_ = layers[layer_nr].polygons_.offset(xy_offset_local, ClipperLib::JoinType::jtRound);
+            }
+            if (xy_offset_hole != 0)
+            {
+                const auto parts = layers[layer_nr].polygons_.splitIntoParts();
+                layers[layer_nr].polygons_.clear();
+
+                for (const auto& part : parts)
+                {
+                    Shape holes;
+                    Shape outline;
+                    for (const Polygon& poly : part)
+                    {
+                        const auto area = poly.area();
+                        const auto abs_area = std::abs(area);
+                        const auto is_hole = area < 0;
+                        if (is_hole)
+                        {
+                            if (hole_offset_max_diameter == 0)
+                            {
+                                holes.push_back(poly.offset(xy_offset_hole));
+                            }
+                            else if (abs_area < max_hole_area)
+                            {
+                                const auto distance = static_cast<int>(std::lerp(xy_offset_hole, 0, abs_area / max_hole_area));
+                                holes.push_back(poly.offset(distance));
+                            }
+                            else
+                            {
+                                holes.push_back(poly);
+                            }
+                        }
+                        else
+                        {
+                            outline.push_back(poly);
+                        }
+                    }
+
+                    layers[layer_nr].polygons_.push_back(outline.difference(holes.unionPolygons()));
+                }
+            }
+        });
 
     mesh.expandXY(xy_offset);
 }
@@ -1047,38 +1121,38 @@ void Slicer::makePolygons(Mesh& mesh, SlicingTolerance slicing_tolerance, std::v
 std::vector<std::pair<int32_t, int32_t>> Slicer::buildZHeightsForFaces(const Mesh& mesh)
 {
     std::vector<std::pair<int32_t, int32_t>> zHeights;
-    zHeights.reserve(mesh.faces.size());
-    for (const auto& face : mesh.faces)
+    zHeights.reserve(mesh.faces_.size());
+    for (const auto& face : mesh.faces_)
     {
         // const MeshFace& face = mesh.faces[mesh_idx];
-        const MeshVertex& v0 = mesh.vertices[face.vertex_index[0]];
-        const MeshVertex& v1 = mesh.vertices[face.vertex_index[1]];
-        const MeshVertex& v2 = mesh.vertices[face.vertex_index[2]];
+        const MeshVertex& v0 = mesh.vertices_[face.vertex_index_[0]];
+        const MeshVertex& v1 = mesh.vertices_[face.vertex_index_[1]];
+        const MeshVertex& v2 = mesh.vertices_[face.vertex_index_[2]];
 
         // get all vertices represented as 3D point
-        Point3 p0 = v0.p;
-        Point3 p1 = v1.p;
-        Point3 p2 = v2.p;
+        Point3LL p0 = v0.p_;
+        Point3LL p1 = v1.p_;
+        Point3LL p2 = v2.p_;
 
         // find the minimum and maximum z point
-        int32_t minZ = p0.z;
-        if (p1.z < minZ)
+        int32_t minZ = p0.z_;
+        if (p1.z_ < minZ)
         {
-            minZ = p1.z;
+            minZ = p1.z_;
         }
-        if (p2.z < minZ)
+        if (p2.z_ < minZ)
         {
-            minZ = p2.z;
+            minZ = p2.z_;
         }
 
-        int32_t maxZ = p0.z;
-        if (p1.z > maxZ)
+        int32_t maxZ = p0.z_;
+        if (p1.z_ > maxZ)
         {
-            maxZ = p1.z;
+            maxZ = p1.z_;
         }
-        if (p2.z > maxZ)
+        if (p2.z_ > maxZ)
         {
-            maxZ = p2.z;
+            maxZ = p2.z_;
         }
 
         zHeights.emplace_back(std::make_pair(minZ, maxZ));
@@ -1087,16 +1161,74 @@ std::vector<std::pair<int32_t, int32_t>> Slicer::buildZHeightsForFaces(const Mes
     return zHeights;
 }
 
-SlicerSegment Slicer::project2D(const Point3& p0, const Point3& p1, const Point3& p2, const coord_t z)
+SlicerSegment Slicer::project2D(
+    const Point3LL& p0,
+    const Point3LL& p1,
+    const Point3LL& p2,
+    const std::optional<Point2F>& uv0,
+    const std::optional<Point2F>& uv1,
+    const std::optional<Point2F>& uv2,
+    const coord_t z)
 {
     SlicerSegment seg;
 
-    seg.start.X = interpolate(z, p0.z, p1.z, p0.x, p1.x);
-    seg.start.Y = interpolate(z, p0.z, p1.z, p0.y, p1.y);
-    seg.end.X = interpolate(z, p0.z, p2.z, p0.x, p2.x);
-    seg.end.Y = interpolate(z, p0.z, p2.z, p0.y, p2.y);
+    seg.start.X = interpolate(z, p0.z_, p1.z_, p0.x_, p1.x_);
+    seg.start.Y = interpolate(z, p0.z_, p1.z_, p0.y_, p1.y_);
+    seg.end.X = interpolate(z, p0.z_, p2.z_, p0.x_, p2.x_);
+    seg.end.Y = interpolate(z, p0.z_, p2.z_, p0.y_, p2.y_);
+
+    if (uv0.has_value() && uv1.has_value() && uv2.has_value())
+    {
+        const std::optional<Point3D> start_barycentric = getBarycentricCoordinates(Point3LL(seg.start, z), p0, p1, p2);
+        const std::optional<Point3D> end_barycentric = getBarycentricCoordinates(Point3LL(seg.end, z), p0, p1, p2);
+
+        if (start_barycentric.has_value() && end_barycentric.has_value())
+        {
+            seg.uv_start = interpolateUV(start_barycentric.value(), uv0.value(), uv1.value(), uv2.value());
+            seg.uv_end = interpolateUV(end_barycentric.value(), uv0.value(), uv1.value(), uv2.value());
+        }
+    }
 
     return seg;
+}
+
+std::optional<Point3D> Slicer::getBarycentricCoordinates(const Point3LL& point, const Point3LL& p0, const Point3LL& p1, const Point3LL& p2)
+{
+    // Calculate vectors from p0 to p1 and p0 to p2
+    const Point3LL v0(p1 - p0);
+    const Point3LL v1(p2 - p0);
+    const Point3LL v2(point - p0);
+
+    // Compute dot products
+    const double d00 = v0.dot(v0);
+    const double d01 = v0.dot(v1);
+    const double d11 = v1.dot(v1);
+    const double d20 = v2.dot(v0);
+    const double d21 = v2.dot(v1);
+
+    // Calculate denominator for barycentric coordinates
+    const double denom = d00 * d11 - d01 * d01;
+
+    // Check if triangle is degenerate
+    if (std::abs(denom) < 0.000001)
+    {
+        return std::nullopt;
+    }
+
+    // Calculate barycentric coordinates
+    const double v = (d11 * d20 - d01 * d21) / denom;
+    const double w = (d00 * d21 - d01 * d20) / denom;
+    const double u = 1.0 - v - w;
+
+    // Return as a Point_3 where x/y/z represent the barycentric coordinates u/v/w
+    return Point3D(u, v, w);
+}
+
+Point2F Slicer::interpolateUV(const Point3D& barycentric_coordinates, const Point2F& uv0, const Point2F& uv1, const Point2F& uv2)
+{
+    return Point2F(
+        barycentric_coordinates.x_ * uv0.x_ + barycentric_coordinates.y_ * uv1.x_ + barycentric_coordinates.z_ * uv2.x_,
+        barycentric_coordinates.x_ * uv0.y_ + barycentric_coordinates.y_ * uv1.y_ + barycentric_coordinates.z_ * uv2.y_);
 }
 
 coord_t Slicer::interpolate(const coord_t x, const coord_t x0, const coord_t x1, const coord_t y0, const coord_t y1)

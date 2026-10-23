@@ -1,19 +1,26 @@
 // Copyright (c) 2023 UltiMaker
 // CuraEngine is released under the terms of the AGPLv3 or higher
 
-#include <range/v3/view/join.hpp>
-#include "InsetOrderOptimizer.h" //Unit also under test.
 #include "WallsComputation.h" //Unit under test.
-#include "settings/Settings.h" //Settings to generate walls with.
-#include "sliceDataStorage.h" //Sl
-#include "utils/polygon.h" //To create example polygons.
-#include <gtest/gtest.h>
+
 #include <unordered_set>
 
+#include <range/v3/view/join.hpp>
+#include <scripta/logger.h>
+
+#include <gtest/gtest.h>
+
+#include "InsetOrderOptimizer.h" //Unit also under test.
+#include "geometry/OpenPolyline.h"
+#include "geometry/Polygon.h" //To create example polygons.
+#include "settings/Settings.h" //Settings to generate walls with.
+#include "sliceDataStorage.h" //Sl
+#include "slicer.h"
+
 #ifdef WALLS_COMPUTATION_TEST_SVG_OUTPUT
-#include "utils/SVG.h"
-#include "utils/polygon.h"
 #include <cstdlib>
+
+#include "utils/SVG.h"
 #endif // WALLS_COMPUTATION_TEST_SVG_OUTPUT
 
 // NOLINTBEGIN(*-magic-numbers)
@@ -38,14 +45,15 @@ public:
     /*!
      * Basic 10x10mm square shape to work with.
      */
-    Polygons square_shape;
+    Shape square_shape;
 
     /*!
      * A rectangle enclosing two triangular holes;
      */
-    Polygons ff_holes;
+    Shape ff_holes;
 
-    WallsComputationTest() : walls_computation(settings, LayerIndex(100))
+    WallsComputationTest()
+        : walls_computation(settings, LayerIndex(100))
     {
         square_shape.emplace_back();
         square_shape.back().emplace_back(0, 0);
@@ -70,12 +78,14 @@ public:
         settings.add("magic_spiralize", "false");
         settings.add("meshfix_maximum_deviation", "0.1");
         settings.add("meshfix_maximum_extrusion_area_deviation", "0.01");
+        settings.add("meshfix_fluid_motion_enabled", "false");
         settings.add("meshfix_maximum_resolution", "0.01");
         settings.add("min_wall_line_width", "0.3");
         settings.add("min_bead_width", "0");
         settings.add("min_feature_size", "0");
         settings.add("wall_0_extruder_nr", "0");
         settings.add("wall_0_inset", "0");
+        settings.add("wall_x_inset", "0");
         settings.add("wall_line_count", "2");
         settings.add("wall_line_width_0", "0.4");
         settings.add("wall_line_width_x", "0.4");
@@ -95,19 +105,22 @@ public:
  */
 TEST_F(WallsComputationTest, GenerateWallsForLayerSinglePart)
 {
+    auto layers = std::vector<SlicerLayer>(200, SlicerLayer{});
+    scripta::setAll(layers);
     SliceLayer layer;
     layer.parts.emplace_back();
     SliceLayerPart& part = layer.parts.back();
-    part.outline.add(square_shape);
+    part.outline.push_back(square_shape);
 
     // Run the test.
-    walls_computation.generateWalls(&layer);
+    walls_computation.generateWalls(&layer, SectionType::WALL);
 
     // Verify that something was generated.
     EXPECT_FALSE(part.wall_toolpaths.empty()) << "There must be some walls.";
     EXPECT_GT(part.print_outline.area(), 0) << "The print outline must encompass the outer wall, so it must be more than 0.";
     EXPECT_LE(part.print_outline.area(), square_shape.area()) << "The print outline must stay within the bounds of the original part.";
-    EXPECT_GT(part.inner_area.area(), 0) << "The inner area must be within the innermost wall. There are not enough walls to fill the entire part, so there is a positive inner area.";
+    EXPECT_GT(part.inner_area.area(), 0)
+        << "The inner area must be within the innermost wall. There are not enough walls to fill the entire part, so there is a positive inner area.";
     EXPECT_EQ(layer.parts.size(), 1) << "There is still just 1 part.";
 }
 
@@ -120,10 +133,10 @@ TEST_F(WallsComputationTest, GenerateWallsZeroWalls)
     SliceLayer layer;
     layer.parts.emplace_back();
     SliceLayerPart& part = layer.parts.back();
-    part.outline.add(square_shape);
+    part.outline.push_back(square_shape);
 
     // Run the test.
-    walls_computation.generateWalls(&layer);
+    walls_computation.generateWalls(&layer, SectionType::WALL);
 
     // Verify that there is still an inner area, outline and parts.
     EXPECT_EQ(part.inner_area.area(), square_shape.area()) << "There are no walls, so the inner area (for infill/skin) needs to be the entire part.";
@@ -141,10 +154,10 @@ TEST_F(WallsComputationTest, WallToolPathsGetWeakOrder)
     SliceLayer layer;
     layer.parts.emplace_back();
     SliceLayerPart& part = layer.parts.back();
-    part.outline.add(ff_holes);
+    part.outline.push_back(ff_holes);
 
     // Run the test.
-    walls_computation.generateWalls(&layer);
+    walls_computation.generateWalls(&layer, SectionType::WALL);
 
     const bool outer_to_inner = false;
     std::vector<ExtrusionLine> all_paths;
